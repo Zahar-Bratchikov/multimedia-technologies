@@ -18,7 +18,7 @@ class PlotWidget(QWidget):
         height = self.height()
         center_x = width // 2
         center_y = height // 2
-        scale = min(width, height) / 25
+        grid_step = min(width, height) / 20  # Унифицированный масштаб сетки и графиков
 
         # Заливка фона
         painter.fillRect(self.rect(), QBrush(Qt.white))
@@ -26,33 +26,31 @@ class PlotWidget(QWidget):
         # Сетка
         pen = QPen(Qt.lightGray, 1, Qt.SolidLine)
         painter.setPen(pen)
-        grid_step_x = width / 20
-        grid_step_y = height / 20
         for i in range(-10, 11):
-            x = center_x + i * grid_step_x
-            y = center_y - i * grid_step_y
+            x = center_x + i * grid_step
+            y = center_y - i * grid_step
             painter.drawLine(x, 0, x, height)
             painter.drawLine(0, y, width, y)
 
         # Оси координат
         pen = QPen(Qt.black, 2)
         painter.setPen(pen)
-        painter.drawLine(0, center_y, width, center_y)
-        painter.drawLine(center_x, 0, center_x, height)
+        painter.drawLine(0, center_y, width, center_y)  # Ось X
+        painter.drawLine(center_x, 0, center_x, height)  # Ось Y
 
         # Подписи осей
         font = QFont()
-        font.setPointSize(12)
+        font.setPointSize(max(10, min(width, height) // 50))  # Динамический размер шрифта
         painter.setFont(font)
-        painter.drawText(width - 40, center_y - 5, "Ось X")
-        painter.drawText(center_x + 5, 20, "Ось Y")
+        painter.drawText(width - 50, center_y - 5, "Ось X")
+        painter.drawText(center_x + 10, 30, "Ось Y")
 
         # Отметки на осях
         pen.setWidth(1)
         painter.setPen(pen)
         for i in range(-10, 11):
-            x = center_x + i * grid_step_x
-            y = center_y - i * grid_step_y
+            x = center_x + i * grid_step
+            y = center_y - i * grid_step
             painter.drawLine(x, center_y - 5, x, center_y + 5)
             painter.drawLine(center_x - 5, y, center_x + 5, y)
             if i != 0:
@@ -62,21 +60,21 @@ class PlotWidget(QWidget):
         # Функции
         pen.setWidth(2)
 
-        # x^2 (простая)
+        # x^2
         pen.setColor(Qt.blue)
         painter.setPen(pen)
-        self.draw_function(painter, lambda x: x ** 2, center_x, center_y, scale, -10, 10)
+        self.draw_function(painter, lambda x: x ** 2, center_x, center_y, grid_step, -10, 10)
 
-        # sin(x) * exp(-0.1x^2) (сложная)
+        # sin(x) * exp(-0.1x^2)
         pen.setColor(Qt.green)
         painter.setPen(pen)
-        self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y, scale, -10, 10)
+        self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y, grid_step, -10, 10)
 
-        # 1/x (разрывная)
+        # 1/x
         pen.setColor(Qt.red)
         painter.setPen(pen)
-        self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, scale, -10, -0.1)
-        self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, scale, 0.1, 10)
+        self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, grid_step, -10, -0.1)
+        self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, grid_step, 0.1, 10)
 
         # Легенда
         self.draw_legend(painter, width - 180, 20)
