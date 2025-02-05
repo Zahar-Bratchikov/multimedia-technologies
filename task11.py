@@ -1,8 +1,8 @@
 import sys
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout,
-                               QSpinBox, QCheckBox, QLabel)
-from PySide6.QtGui import QPainter, QPen, QBrush
+                               QDoubleSpinBox, QCheckBox, QLabel)
+from PySide6.QtGui import QPainter, QPen, QBrush, QFont
 from PySide6.QtCore import Qt
 
 
@@ -10,9 +10,9 @@ class PlotWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumSize(800, 600)
-        self.x_min = -10
-        self.x_max = 10
-        self.step = 1
+        self.x_min = -10.0
+        self.x_max = 10.0
+        self.step = 1.0
         self.functions = {
             "x^2": True,
             "sin(x) * exp(-0.1x^2)": True,
@@ -29,16 +29,16 @@ class PlotWidget(QWidget):
 
         painter.fillRect(self.rect(), QBrush(Qt.white))
 
-        # Рисуем пунктирные линии сетки
         pen = QPen(Qt.lightGray, 1, Qt.DashLine)
         painter.setPen(pen)
 
-        for i in range(self.x_min, self.x_max + 1, self.step):
+        i = self.x_min
+        while i <= self.x_max:
             x = center_x + i * grid_step
             painter.drawLine(x, 0, x, height)
             painter.drawLine(0, center_y - i * grid_step, width, center_y - i * grid_step)
+            i += self.step
 
-        # Рисуем оси жирными сплошными линиями
         pen.setColor(Qt.black)
         pen.setWidth(2)
         pen.setStyle(Qt.SolidLine)
@@ -46,32 +46,39 @@ class PlotWidget(QWidget):
         painter.drawLine(0, center_y, width, center_y)
         painter.drawLine(center_x, 0, center_x, height)
 
-        pen.setWidth(1)
-        painter.setPen(pen)
-        for i in range(self.x_min, self.x_max + 1, self.step):
+        font = QFont()
+        font.setPointSize(12)
+        painter.setFont(font)
+        painter.drawText(width - 30, center_y - 5, "X")
+        painter.drawText(center_x + 10, 15, "Y")
+
+        font.setPointSize(10)
+        painter.setFont(font)
+        i = self.x_min
+        while i <= self.x_max:
             x = center_x + i * grid_step
             y = center_y - i * grid_step
-            painter.drawLine(x, center_y - 5, x, center_y + 5)
-            painter.drawLine(center_x - 5, y, center_x + 5, y)
             if i != 0:
-                painter.drawText(x - 10, center_y + 20, str(i))
-                painter.drawText(center_x + 10, y + 5, str(-i))
+                painter.drawText(x - 15, center_y + 20, "{:.2f}".format(i))
+                painter.drawText(center_x - 40, y + 5, "{:.2f}".format(i))
+            i += self.step
 
         pen.setWidth(2)
-        if self.functions["x^2"]:
-            pen.setColor(Qt.blue)
-            painter.setPen(pen)
-            self.draw_function(painter, lambda x: x ** 2, center_x, center_y, grid_step)
-
-        if self.functions["sin(x) * exp(-0.1x^2)"]:
-            pen.setColor(Qt.green)
-            painter.setPen(pen)
-            self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y, grid_step)
-
-        if self.functions["1/x"]:
-            pen.setColor(Qt.red)
-            painter.setPen(pen)
-            self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, grid_step)
+        for func_name, enabled in self.functions.items():
+            if enabled:
+                if func_name == "x^2":
+                    pen.setColor(Qt.blue)
+                    painter.setPen(pen)
+                    self.draw_function(painter, lambda x: x ** 2, center_x, center_y, grid_step)
+                elif func_name == "sin(x) * exp(-0.1x^2)":
+                    pen.setColor(Qt.green)
+                    painter.setPen(pen)
+                    self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y,
+                                       grid_step)
+                elif func_name == "1/x":
+                    pen.setColor(Qt.red)
+                    painter.setPen(pen)
+                    self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, grid_step)
 
     def draw_function(self, painter, func, cx, cy, scale, step=0.05):
         prev_point = None
@@ -107,19 +114,22 @@ class MainWindow(QMainWindow):
         self.plot_widget = PlotWidget()
         layout.addWidget(self.plot_widget)
 
-        self.x_min_spin = QSpinBox()
-        self.x_min_spin.setRange(-100, 0)
-        self.x_min_spin.setValue(-10)
+        self.x_min_spin = QDoubleSpinBox()
+        self.x_min_spin.setRange(-100.0, 0.0)
+        self.x_min_spin.setSingleStep(0.1)
+        self.x_min_spin.setValue(-10.0)
         self.x_min_spin.valueChanged.connect(self.update_plot)
 
-        self.x_max_spin = QSpinBox()
-        self.x_max_spin.setRange(0, 100)
-        self.x_max_spin.setValue(10)
+        self.x_max_spin = QDoubleSpinBox()
+        self.x_max_spin.setRange(0.0, 100.0)
+        self.x_max_spin.setSingleStep(0.1)
+        self.x_max_spin.setValue(10.0)
         self.x_max_spin.valueChanged.connect(self.update_plot)
 
-        self.step_spin = QSpinBox()
-        self.step_spin.setRange(1, 10)
-        self.step_spin.setValue(1)
+        self.step_spin = QDoubleSpinBox()
+        self.step_spin.setRange(0.1, 10.0)
+        self.step_spin.setSingleStep(0.1)
+        self.step_spin.setValue(1.0)
         self.step_spin.valueChanged.connect(self.update_plot)
 
         self.check_x2 = QCheckBox("x^2")
@@ -145,7 +155,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.check_1x)
 
         layout.addLayout(control_layout)
-
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
