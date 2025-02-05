@@ -29,6 +29,7 @@ class PlotWidget(QWidget):
 
         painter.fillRect(self.rect(), QBrush(Qt.white))
 
+        # Рисуем пунктирные линии сетки
         pen = QPen(Qt.lightGray, 1, Qt.DashLine)
         painter.setPen(pen)
 
@@ -39,6 +40,7 @@ class PlotWidget(QWidget):
             painter.drawLine(0, center_y - i * grid_step, width, center_y - i * grid_step)
             i += self.step
 
+        # Рисуем оси жирными сплошными линиями
         pen.setColor(Qt.black)
         pen.setWidth(2)
         pen.setStyle(Qt.SolidLine)
@@ -46,12 +48,14 @@ class PlotWidget(QWidget):
         painter.drawLine(0, center_y, width, center_y)
         painter.drawLine(center_x, 0, center_x, height)
 
+        # Подписи осей
         font = QFont()
         font.setPointSize(12)
         painter.setFont(font)
         painter.drawText(width - 30, center_y - 5, "X")
         painter.drawText(center_x + 10, 15, "Y")
 
+        # Подписи меток на осях с отступами
         font.setPointSize(10)
         painter.setFont(font)
         i = self.x_min
@@ -59,10 +63,11 @@ class PlotWidget(QWidget):
             x = center_x + i * grid_step
             y = center_y - i * grid_step
             if i != 0:
-                painter.drawText(x - 15, center_y + 20, "{:.2f}".format(i))
-                painter.drawText(center_x - 40, y + 5, "{:.2f}".format(i))
+                painter.drawText(x - 15, center_y + 20, f"{i:.2f}")  # Подписи оси X
+                painter.drawText(center_x - 40, y + 5, f"{i:.2f}")  # Подписи оси Y слева
             i += self.step
 
+        # Отрисовка функций
         pen.setWidth(2)
         for func_name, enabled in self.functions.items():
             if enabled:
@@ -115,13 +120,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.plot_widget)
 
         self.x_min_spin = QDoubleSpinBox()
-        self.x_min_spin.setRange(-100.0, 0.0)
+        self.x_min_spin.setRange(-1000.0, 1000.0)
         self.x_min_spin.setSingleStep(0.1)
         self.x_min_spin.setValue(-10.0)
         self.x_min_spin.valueChanged.connect(self.update_plot)
 
         self.x_max_spin = QDoubleSpinBox()
-        self.x_max_spin.setRange(0.0, 100.0)
+        self.x_max_spin.setRange(-1000.0, 1000.0)
         self.x_max_spin.setSingleStep(0.1)
         self.x_max_spin.setValue(10.0)
         self.x_max_spin.valueChanged.connect(self.update_plot)
@@ -132,17 +137,13 @@ class MainWindow(QMainWindow):
         self.step_spin.setValue(1.0)
         self.step_spin.valueChanged.connect(self.update_plot)
 
-        self.check_x2 = QCheckBox("x^2")
-        self.check_x2.setChecked(True)
-        self.check_x2.stateChanged.connect(self.update_plot)
-
-        self.check_sin_exp = QCheckBox("sin(x) * exp(-0.1x^2)")
-        self.check_sin_exp.setChecked(True)
-        self.check_sin_exp.stateChanged.connect(self.update_plot)
-
-        self.check_1x = QCheckBox("1/x")
-        self.check_1x.setChecked(True)
-        self.check_1x.stateChanged.connect(self.update_plot)
+        self.function_checkboxes = {}
+        for func_name in self.plot_widget.functions:
+            checkbox = QCheckBox(func_name)
+            checkbox.setChecked(True)
+            checkbox.stateChanged.connect(self.update_plot)
+            control_layout.addWidget(checkbox)
+            self.function_checkboxes[func_name] = checkbox
 
         control_layout.addWidget(QLabel("X min:"))
         control_layout.addWidget(self.x_min_spin)
@@ -150,9 +151,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.x_max_spin)
         control_layout.addWidget(QLabel("Step:"))
         control_layout.addWidget(self.step_spin)
-        control_layout.addWidget(self.check_x2)
-        control_layout.addWidget(self.check_sin_exp)
-        control_layout.addWidget(self.check_1x)
 
         layout.addLayout(control_layout)
         widget = QWidget()
@@ -160,13 +158,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(widget)
 
     def update_plot(self):
-        functions = {
-            "x^2": self.check_x2.isChecked(),
-            "sin(x) * exp(-0.1x^2)": self.check_sin_exp.isChecked(),
-            "1/x": self.check_1x.isChecked()
-        }
-        self.plot_widget.update_settings(self.x_min_spin.value(), self.x_max_spin.value(), self.step_spin.value(),
-                                         functions)
+        functions = {name: checkbox.isChecked() for name, checkbox in self.function_checkboxes.items()}
+        self.plot_widget.update_settings(self.x_min_spin.value(), self.x_max_spin.value(), self.step_spin.value(), functions)
 
 
 if __name__ == "__main__":
