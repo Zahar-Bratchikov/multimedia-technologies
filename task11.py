@@ -2,11 +2,10 @@ import sys
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout,
                                QSpinBox, QCheckBox, QLabel)
-from PySide6.QtGui import QPainter, QPen, QBrush, QFont
+from PySide6.QtGui import QPainter, QPen, QBrush
 from PySide6.QtCore import Qt
 
 
-# Виджет для отрисовки графиков
 class PlotWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -29,7 +28,9 @@ class PlotWidget(QWidget):
         grid_step = min(width, height) / ((self.x_max - self.x_min) / self.step * 2)
 
         painter.fillRect(self.rect(), QBrush(Qt.white))
-        pen = QPen(Qt.lightGray, 1, Qt.SolidLine)
+
+        # Рисуем пунктирные линии сетки
+        pen = QPen(Qt.lightGray, 1, Qt.DashLine)
         painter.setPen(pen)
 
         for i in range(self.x_min, self.x_max + 1, self.step):
@@ -37,8 +38,10 @@ class PlotWidget(QWidget):
             painter.drawLine(x, 0, x, height)
             painter.drawLine(0, center_y - i * grid_step, width, center_y - i * grid_step)
 
+        # Рисуем оси жирными сплошными линиями
         pen.setColor(Qt.black)
         pen.setWidth(2)
+        pen.setStyle(Qt.SolidLine)
         painter.setPen(pen)
         painter.drawLine(0, center_y, width, center_y)
         painter.drawLine(center_x, 0, center_x, height)
@@ -92,7 +95,6 @@ class PlotWidget(QWidget):
         self.update()
 
 
-# Главное окно приложения
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
