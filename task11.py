@@ -75,11 +75,13 @@ class PlotWidget(QWidget):
                     pen.setColor(Qt.blue)
                     painter.setPen(pen)
                     self.draw_function(painter, lambda x: x ** 2, center_x, center_y, grid_step)
+
                 elif func_name == "sin(x) * exp(-0.1x^2)":
                     pen.setColor(Qt.green)
                     painter.setPen(pen)
                     self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y,
                                        grid_step)
+
                 elif func_name == "1/x":
                     pen.setColor(Qt.red)
                     painter.setPen(pen)
