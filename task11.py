@@ -18,6 +18,11 @@ class PlotWidget(QWidget):
             "sin(x) * exp(-0.1x^2)": True,
             "1/x": True
         }
+        self.colors = {
+            "x^2": Qt.blue,
+            "sin(x) * exp(-0.1x^2)": Qt.green,
+            "1/x": Qt.red
+        }
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -40,7 +45,7 @@ class PlotWidget(QWidget):
             painter.drawLine(0, center_y - i * grid_step, width, center_y - i * grid_step)
             i += self.step
 
-        # Рисуем оси жирными сплошными линиями
+        # Рисуем оси
         pen.setColor(Qt.black)
         pen.setWidth(2)
         pen.setStyle(Qt.SolidLine)
@@ -55,7 +60,7 @@ class PlotWidget(QWidget):
         painter.drawText(width - 30, center_y - 5, "X")
         painter.drawText(center_x + 10, 15, "Y")
 
-        # Подписи меток на осях с отступами
+        # Подписи меток на осях
         font.setPointSize(10)
         painter.setFont(font)
         i = self.x_min
@@ -63,29 +68,26 @@ class PlotWidget(QWidget):
             x = center_x + i * grid_step
             y = center_y - i * grid_step
             if i != 0:
-                painter.drawText(x - 15, center_y + 20, f"{i:.2f}")  # Подписи оси X
-                painter.drawText(center_x - 40, y + 5, f"{i:.2f}")  # Подписи оси Y слева
+                painter.drawText(x - 15, center_y + 20, f"{i:.2f}")
+                painter.drawText(center_x - 40, y + 5, f"{i:.2f}")
             i += self.step
 
         # Отрисовка функций
         pen.setWidth(2)
         for func_name, enabled in self.functions.items():
             if enabled:
+                pen.setColor(self.colors[func_name])
+                painter.setPen(pen)
                 if func_name == "x^2":
-                    pen.setColor(Qt.blue)
-                    painter.setPen(pen)
                     self.draw_function(painter, lambda x: x ** 2, center_x, center_y, grid_step)
-
                 elif func_name == "sin(x) * exp(-0.1x^2)":
-                    pen.setColor(Qt.green)
-                    painter.setPen(pen)
                     self.draw_function(painter, lambda x: np.sin(x) * np.exp(-0.1 * x ** 2), center_x, center_y,
                                        grid_step)
-
                 elif func_name == "1/x":
-                    pen.setColor(Qt.red)
-                    painter.setPen(pen)
                     self.draw_function(painter, lambda x: 1 / x if x != 0 else None, center_x, center_y, grid_step)
+
+        # Отрисовка легенды
+        self.draw_legend(painter, 10, 10)
 
     def draw_function(self, painter, func, cx, cy, scale, step=0.05):
         prev_point = None
@@ -100,6 +102,20 @@ class PlotWidget(QWidget):
             else:
                 prev_point = None
             x += step
+
+    def draw_legend(self, painter, x, y):
+        font = QFont()
+        font.setPointSize(10)
+        painter.setFont(font)
+
+        box_size = 15
+        spacing = 5
+        for func_name, color in self.colors.items():
+            if self.functions[func_name]:
+                painter.setBrush(QBrush(color))
+                painter.drawRect(x, y, box_size, box_size)
+                painter.drawText(x + box_size + spacing, y + box_size - 2, func_name)
+                y += box_size + spacing
 
     def update_settings(self, x_min, x_max, step, functions):
         self.x_min = x_min
@@ -123,19 +139,16 @@ class MainWindow(QMainWindow):
 
         self.x_min_spin = QDoubleSpinBox()
         self.x_min_spin.setRange(-1000.0, 1000.0)
-        self.x_min_spin.setSingleStep(0.1)
         self.x_min_spin.setValue(-10.0)
         self.x_min_spin.valueChanged.connect(self.update_plot)
 
         self.x_max_spin = QDoubleSpinBox()
         self.x_max_spin.setRange(-1000.0, 1000.0)
-        self.x_max_spin.setSingleStep(0.1)
         self.x_max_spin.setValue(10.0)
         self.x_max_spin.valueChanged.connect(self.update_plot)
 
         self.step_spin = QDoubleSpinBox()
         self.step_spin.setRange(0.1, 10.0)
-        self.step_spin.setSingleStep(0.1)
         self.step_spin.setValue(1.0)
         self.step_spin.valueChanged.connect(self.update_plot)
 
@@ -161,7 +174,8 @@ class MainWindow(QMainWindow):
 
     def update_plot(self):
         functions = {name: checkbox.isChecked() for name, checkbox in self.function_checkboxes.items()}
-        self.plot_widget.update_settings(self.x_min_spin.value(), self.x_max_spin.value(), self.step_spin.value(), functions)
+        self.plot_widget.update_settings(self.x_min_spin.value(), self.x_max_spin.value(), self.step_spin.value(),
+                                         functions)
 
 
 if __name__ == "__main__":
