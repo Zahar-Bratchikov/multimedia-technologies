@@ -1,11 +1,11 @@
 import sys
 import numpy as np
+from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QLabel
 )
 from PySide6.QtGui import QPainter, QPen, QBrush, QFont, QPolygon
-from PySide6.QtCore import Qt, QPoint
 from functions import get_function_data
 
 # Цвета для функций: функция 1 – синий, функция 2 – зеленый, функция 3 – красный.
@@ -49,7 +49,6 @@ class PlotWidget(QWidget):
         width, height = self.width(), self.height()
 
         # Расширяем диапазон оси X, добавляя по одной клетке с каждой стороны.
-        # Если user_x_start и user_x_end равны, это гарантирует, что диапазон не нулевой.
         grid_x_min = self.user_x_start - 1
         grid_x_max = self.user_x_end + 1
         x_range = grid_x_max - grid_x_min
@@ -60,7 +59,6 @@ class PlotWidget(QWidget):
         def to_pixel_x(x):
             return int((x - grid_x_min) / x_range * width)
 
-        # Для оси Y: если диапазон равен нулю, то аналогично.
         y_range = self.y_max - self.y_min
         if y_range == 0:
             y_range = 1e-6
@@ -76,7 +74,6 @@ class PlotWidget(QWidget):
         painter.setPen(grid_pen)
 
         # Отрисовка вертикальных линий и подписей по оси X с шагом 1.
-        # Используем расширенный диапазон: от (user_x_start - 1) до (user_x_end + 1)
         start_label = int(np.floor(grid_x_min))
         end_label = int(np.ceil(grid_x_max))
         for x_val in range(start_label, end_label + 1):
@@ -84,7 +81,6 @@ class PlotWidget(QWidget):
             painter.drawLine(x_pixel, 0, x_pixel, height)
             painter.setPen(Qt.black)
             painter.setFont(QFont("Arial", 8))
-            # Центрируем подпись под линией.
             painter.drawText(x_pixel - 5, height - 5, str(x_val))
             painter.setPen(grid_pen)
 
@@ -119,8 +115,6 @@ class PlotWidget(QWidget):
             pen = QPen(curve["color"], 2)
             painter.setPen(pen)
             points = []
-            # Если разница по Y между точками превышает половину высоты виджета,
-            # считаем, что произошёл разрыв и не соединяем точки линией.
             threshold = height / 2
             for x_val, y_val in zip(curve["x"], curve["y"]):
                 if np.isnan(y_val):
@@ -214,22 +208,30 @@ class MainWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Автоматическое обновление графика при изменении значений.
-        self.start_spin.valueChanged.connect(self.update_plot)
-        self.end_spin.valueChanged.connect(self.update_plot)
-        self.points_spin.valueChanged.connect(self.update_plot)
-        self.func1_checkbox.stateChanged.connect(self.update_plot)
-        self.func2_checkbox.stateChanged.connect(self.update_plot)
-        self.func3_checkbox.stateChanged.connect(self.update_plot)
+        # Таймер для отложенного обновления графика (debounce)
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.update_plot)
+
+        # При изменении значений запускаем таймер.
+        self.start_spin.valueChanged.connect(self.schedule_update)
+        self.end_spin.valueChanged.connect(self.schedule_update)
+        self.points_spin.valueChanged.connect(self.schedule_update)
+        self.func1_checkbox.stateChanged.connect(self.schedule_update)
+        self.func2_checkbox.stateChanged.connect(self.schedule_update)
+        self.func3_checkbox.stateChanged.connect(self.schedule_update)
 
         # Инициализация отображения графика.
         self.update_plot()
+
+    def schedule_update(self):
+        # Запускаем таймер на 200 мс. Если таймер уже запущен, предыдущий вызов будет отменён.
+        self.update_timer.start(200)
 
     def update_plot(self):
         start = self.start_spin.value()
         end = self.end_spin.value()
         num_points = self.points_spin.value()
-        # Сохраняем введённые значения для оси X.
         self.plot_widget.user_x_start = start
         self.plot_widget.user_x_end = end
         data_list = []
