@@ -1,11 +1,13 @@
 import sys
 import numpy as np
-from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QDoubleSpinBox, QSpinBox, QCheckBox, QLabel
 )
-from PySide6.QtGui import QPainter, QPen, QBrush, QFont, QPolygon
+from PySide6.QtGui import (
+    QPainter, QPen, QBrush, QFont, QPainterPath, QColor
+)
 from functions import get_function_data
 
 # Цвета для функций: функция 1 – синий, функция 2 – зеленый, функция 3 – красный.
@@ -30,7 +32,7 @@ class PlotWidget(QWidget):
 
     def setData(self, data_list):
         """
-        Принимает список словарей с данными для построения графиков,
+        Принимает список словарей с данными для построения гистограммы,
         рассчитывает границы по оси Y (с отступом) и обновляет изображение.
         Границы оси X остаются заданными пользователем.
         """
@@ -48,23 +50,24 @@ class PlotWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         width, height = self.width(), self.height()
 
-        # Расширяем диапазон оси X, добавляя по одной клетке с каждой стороны.
+        # Расширяем диапазон по оси X с небольшим запасом.
         grid_x_min = self.user_x_start - 1
         grid_x_max = self.user_x_end + 1
         x_range = grid_x_max - grid_x_min
         if x_range == 0:
-            x_range = 1e-6  # предотвращаем деление на ноль
+            x_range = 1e-6
 
-        # Функция для преобразования x в пиксели.
+        # Функции преобразования координат.
         def to_pixel_x(x):
             return int((x - grid_x_min) / x_range * width)
-
         y_range = self.y_max - self.y_min
         if y_range == 0:
             y_range = 1e-6
-
         def to_pixel_y(y):
             return int(height - (y - self.y_min) / y_range * height)
+
+        # Определяем положение оси X (нулевая линия).
+        zero_y = to_pixel_y(0)
 
         # Заливка фона.
         painter.fillRect(self.rect(), QBrush(Qt.white))
@@ -72,8 +75,6 @@ class PlotWidget(QWidget):
         # Отрисовка сетки.
         grid_pen = QPen(Qt.lightGray, 1, Qt.DashLine)
         painter.setPen(grid_pen)
-
-        # Отрисовка вертикальных линий и подписей по оси X с шагом 1.
         start_label = int(np.floor(grid_x_min))
         end_label = int(np.ceil(grid_x_max))
         for x_val in range(start_label, end_label + 1):
@@ -83,8 +84,6 @@ class PlotWidget(QWidget):
             painter.setFont(QFont("Arial", 8))
             painter.drawText(x_pixel - 5, height - 5, str(x_val))
             painter.setPen(grid_pen)
-
-        # Отрисовка горизонтальных линий и подписей по оси Y.
         grid_lines = 10
         y_step = (self.y_max - self.y_min) / grid_lines
         y_val = self.y_min
@@ -97,44 +96,82 @@ class PlotWidget(QWidget):
             painter.setPen(grid_pen)
             y_val += y_step
 
-        # Отрисовка осей и выделение нулевой линии.
+        # Отрисовка осей.
         axis_pen = QPen(Qt.black, 2)
         painter.setPen(axis_pen)
         if self.y_min <= 0 <= self.y_max:
-            y_zero = to_pixel_y(0)
-            zero_pen = QPen(Qt.darkGray, 3, Qt.SolidLine)
-            painter.setPen(zero_pen)
-            painter.drawLine(0, y_zero, width, y_zero)
+            painter.drawLine(0, zero_y, width, zero_y)
         if grid_x_min <= 0 <= grid_x_max:
             x_zero = to_pixel_x(0)
-            painter.setPen(axis_pen)
             painter.drawLine(x_zero, 0, x_zero, height)
 
-        # Отрисовка графиков функций.
-        for curve in self.data:
-            pen = QPen(curve["color"], 2)
-            painter.setPen(pen)
-            points = []
-            threshold = height / 2
-            for x_val, y_val in zip(curve["x"], curve["y"]):
-                if np.isnan(y_val):
-                    if points:
-                        painter.drawPolyline(QPolygon(points))
-                        points = []
-                else:
-                    new_point = QPoint(to_pixel_x(x_val), to_pixel_y(y_val))
-                    if points:
-                        if abs(new_point.y() - points[-1].y()) > threshold:
-                            painter.drawPolyline(QPolygon(points))
-                            points = [new_point]
-                        else:
-                            points.append(new_point)
-                    else:
-                        points.append(new_point)
-            if points:
-                painter.drawPolyline(QPolygon(points))
+        # Если данных нет, завершаем отрисовку.
+        if not self.data:
+            return
 
-        # Отрисовка легенды.
+        # Все функции используют один и тот же массив x, предполагая, что они синхронизированы.
+        num_points = len(self.data[0]["x"])
+        num_funcs = len(self.data)
+        # Общая ширина группы для одного x-сегмента.
+        group_width = width / (num_points * 1.5)
+        # Ширина подконуса для каждой функции.
+        sub_width = group_width / num_funcs
+        # Высота эллиптического основания для эффекта 3D.
+        ellipse_height = sub_width * 0.6
+
+        # Рисуем конусы для каждой точки и каждой функции
+        for i in range(num_points):
+            # Берем общее значение x из первого набора (предполагается, что все x одинаковые).
+            x_val = self.data[0]["x"][i]
+            x_base = to_pixel_x(x_val)
+            for func_index, curve in enumerate(self.data):
+                y_val = curve["y"][i]
+                if np.isnan(y_val):
+                    continue
+                # Вычисляем смещение по горизонтали для каждого конуса в группе,
+                # чтобы они не пересекались: распределяем равномерно внутри group_width.
+                offset = (func_index - (num_funcs - 1) / 2) * sub_width
+                x_pixel = x_base + int(offset)
+                # Апекс конуса расположен по центру подконуса.
+                apex_x = x_pixel + sub_width / 2
+                apex_y = to_pixel_y(y_val)
+
+                # Боковая поверхность конуса – треугольник: апекс, левая и правая точки базы.
+                base_left = (x_pixel, zero_y)
+                base_right = (x_pixel + sub_width, zero_y)
+                lateral_path = QPainterPath()
+                lateral_path.moveTo(apex_x, apex_y)
+                lateral_path.lineTo(*base_left)
+                lateral_path.lineTo(*base_right)
+                lateral_path.lineTo(apex_x, apex_y)
+                lateral_path.closeSubpath()
+
+                # Рисуем боковую поверхность.
+                painter.setBrush(QBrush(curve["color"]))
+                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
+                painter.drawPath(lateral_path)
+
+                # Отрисовка основания конуса.
+                # Здесь основание представлено эллипсом, который лежит точно на оси X.
+                ellipse_rect = (x_pixel, zero_y - ellipse_height/2, sub_width, ellipse_height)
+                painter.setBrush(QBrush(QColor(curve["color"]).darker(115)))
+                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
+                painter.drawEllipse(*ellipse_rect)
+
+                # Дополнительное выделение: полутень на основании.
+                highlight_color = QColor(curve["color"]).lighter(160)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(highlight_color))
+                # Рисуем верхнюю половину эллипса для положительных значений
+                # и нижнюю половину для отрицательных.
+                if y_val >= 0:
+                    start_angle = 180 * 16
+                    span_angle = -180 * 16
+                else:
+                    start_angle = 0
+                    span_angle = 180 * 16
+                painter.drawArc(*ellipse_rect, start_angle, span_angle)
+
         self.draw_legend(painter)
 
     def draw_legend(self, painter):
@@ -161,7 +198,7 @@ class PlotWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Построение диаграммы нескольких функций")
+        self.setWindowTitle("Гистограмма с конусами (не пересекаются, основание на оси X)")
         self.resize(1000, 800)
 
         main_layout = QVBoxLayout()
@@ -169,28 +206,24 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.plot_widget)
 
         controls_layout = QHBoxLayout()
-        # Интервал: Начало.
         self.start_spin = QDoubleSpinBox()
         self.start_spin.setRange(-1000, 1000)
         self.start_spin.setValue(-10)
         controls_layout.addWidget(QLabel("Начало:"))
         controls_layout.addWidget(self.start_spin)
 
-        # Интервал: Конец.
         self.end_spin = QDoubleSpinBox()
         self.end_spin.setRange(-1000, 1000)
         self.end_spin.setValue(10)
         controls_layout.addWidget(QLabel("Конец:"))
         controls_layout.addWidget(self.end_spin)
 
-        # Количество точек.
         self.points_spin = QSpinBox()
         self.points_spin.setRange(10, 10000)
         self.points_spin.setValue(200)
         controls_layout.addWidget(QLabel("Количество точек:"))
         controls_layout.addWidget(self.points_spin)
 
-        # Выбор функций (номера функций 1-3).
         self.func1_checkbox = QCheckBox("Функция 1 (5*cos(x))")
         self.func1_checkbox.setChecked(True)
         controls_layout.addWidget(self.func1_checkbox)
@@ -208,12 +241,10 @@ class MainWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Таймер для отложенного обновления графика (debounce)
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.update_plot)
 
-        # При изменении значений запускаем таймер.
         self.start_spin.valueChanged.connect(self.schedule_update)
         self.end_spin.valueChanged.connect(self.schedule_update)
         self.points_spin.valueChanged.connect(self.schedule_update)
@@ -221,11 +252,9 @@ class MainWindow(QMainWindow):
         self.func2_checkbox.stateChanged.connect(self.schedule_update)
         self.func3_checkbox.stateChanged.connect(self.schedule_update)
 
-        # Инициализация отображения графика.
         self.update_plot()
 
     def schedule_update(self):
-        # Запускаем таймер на 200 мс. Если таймер уже запущен, предыдущий вызов будет отменён.
         self.update_timer.start(200)
 
     def update_plot(self):
@@ -237,13 +266,28 @@ class MainWindow(QMainWindow):
         data_list = []
         if self.func1_checkbox.isChecked():
             x, y, label = get_function_data(1, start, end, num_points)
-            data_list.append({"x": x, "y": y, "label": label, "color": FUNCTION_COLORS[1]})
+            data_list.append({
+                "x": x,
+                "y": y,
+                "label": label,
+                "color": FUNCTION_COLORS[1]
+            })
         if self.func2_checkbox.isChecked():
             x, y, label = get_function_data(2, start, end, num_points)
-            data_list.append({"x": x, "y": y, "label": label, "color": FUNCTION_COLORS[2]})
+            data_list.append({
+                "x": x,
+                "y": y,
+                "label": label,
+                "color": FUNCTION_COLORS[2]
+            })
         if self.func3_checkbox.isChecked():
             x, y, label = get_function_data(3, start, end, num_points)
-            data_list.append({"x": x, "y": y, "label": label, "color": FUNCTION_COLORS[3]})
+            data_list.append({
+                "x": x,
+                "y": y,
+                "label": label,
+                "color": FUNCTION_COLORS[3]
+            })
         self.plot_widget.setData(data_list)
 
 if __name__ == "__main__":
