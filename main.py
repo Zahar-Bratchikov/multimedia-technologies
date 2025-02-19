@@ -57,7 +57,7 @@ class PlotWidget(QWidget):
         if x_range == 0:
             x_range = 1e-6
 
-        # Функции преобразования координат.
+        # Функции для преобразования координат.
         def to_pixel_x(x):
             return int((x - grid_x_min) / x_range * width)
         y_range = self.y_max - self.y_min
@@ -118,10 +118,13 @@ class PlotWidget(QWidget):
         sub_width = group_width / num_funcs
         # Высота эллиптического основания для эффекта 3D.
         ellipse_height = sub_width * 0.6
+        # Смещение для имитации 3D (относительно каждого подконуса).
+        # Смещение вправо и вверх.
+        shift_x = sub_width * 0.2
+        shift_y = - ellipse_height * 0.5
 
-        # Рисуем конусы для каждой точки и каждой функции
+        # Рисуем конусы для каждой точки и каждой функции так, чтобы они не пересекались.
         for i in range(num_points):
-            # Берем общее значение x из первого набора (предполагается, что все x одинаковые).
             x_val = self.data[0]["x"][i]
             x_base = to_pixel_x(x_val)
             for func_index, curve in enumerate(self.data):
@@ -129,41 +132,54 @@ class PlotWidget(QWidget):
                 if np.isnan(y_val):
                     continue
                 # Вычисляем смещение по горизонтали для каждого конуса в группе,
-                # чтобы они не пересекались: распределяем равномерно внутри group_width.
+                # распределяем равномерно внутри группы.
                 offset = (func_index - (num_funcs - 1) / 2) * sub_width
                 x_pixel = x_base + int(offset)
                 # Апекс конуса расположен по центру подконуса.
                 apex_x = x_pixel + sub_width / 2
                 apex_y = to_pixel_y(y_val)
 
-                # Боковая поверхность конуса – треугольник: апекс, левая и правая точки базы.
-                base_left = (x_pixel, zero_y)
-                base_right = (x_pixel + sub_width, zero_y)
+                # Создаем боковую поверхность конуса как треугольник.
                 lateral_path = QPainterPath()
                 lateral_path.moveTo(apex_x, apex_y)
-                lateral_path.lineTo(*base_left)
-                lateral_path.lineTo(*base_right)
+                lateral_path.lineTo(x_pixel, zero_y)
+                lateral_path.lineTo(x_pixel + sub_width, zero_y)
                 lateral_path.lineTo(apex_x, apex_y)
                 lateral_path.closeSubpath()
 
-                # Рисуем боковую поверхность.
+                # Смещенный (задний) конус для имитации 3D.
+                offset_path = QPainterPath(lateral_path)
+                offset_path.translate(shift_x, shift_y)
+
+                # Сначала рисуем задний (смещенный) конус.
+                painter.setBrush(QBrush(QColor(curve["color"]).darker(120)))
+                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
+                painter.drawPath(offset_path)
+
+                # Затем рисуем передний конус.
                 painter.setBrush(QBrush(curve["color"]))
                 painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
                 painter.drawPath(lateral_path)
 
-                # Отрисовка основания конуса.
-                # Здесь основание представлено эллипсом, который лежит точно на оси X.
+                # Рисуем основание конуса в виде эллипса, которое лежит на оси X.
                 ellipse_rect = (x_pixel, zero_y - ellipse_height/2, sub_width, ellipse_height)
+                # Рисуем смещенную (заднюю) основу.
+                shifted_ellipse_rect = (
+                    ellipse_rect[0] + shift_x,
+                    ellipse_rect[1] + shift_y,
+                    ellipse_rect[2],
+                    ellipse_rect[3]
+                )
                 painter.setBrush(QBrush(QColor(curve["color"]).darker(115)))
                 painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
+                painter.drawEllipse(*shifted_ellipse_rect)
+                # Рисуем основное основание.
                 painter.drawEllipse(*ellipse_rect)
 
                 # Дополнительное выделение: полутень на основании.
                 highlight_color = QColor(curve["color"]).lighter(160)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(highlight_color))
-                # Рисуем верхнюю половину эллипса для положительных значений
-                # и нижнюю половину для отрицательных.
                 if y_val >= 0:
                     start_angle = 180 * 16
                     span_angle = -180 * 16
@@ -198,7 +214,7 @@ class PlotWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Гистограмма с конусами (не пересекаются, основание на оси X)")
+        self.setWindowTitle("Гистограмма с конусами (3D эффект с смещением)")
         self.resize(1000, 800)
 
         main_layout = QVBoxLayout()
