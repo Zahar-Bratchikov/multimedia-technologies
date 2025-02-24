@@ -122,9 +122,9 @@ class PlotWidget(QWidget):
         # Смещение вправо и вверх для положительных значений.
         shift_x_pos = sub_width * 0.2
         shift_y_pos = -ellipse_height * 0.5
-        # Смещение влево и вниз для отрицательных значений.
+        # Смещение влево и вверх для отрицательных значений.
         shift_x_neg = -sub_width * 0.2
-        shift_y_neg = ellipse_height * 0.5
+        shift_y_neg = -ellipse_height * 0.5
 
         # Рисуем конусы для каждой точки и каждой функции так, чтобы они не пересекались.
         for i in range(num_points):
@@ -142,17 +142,17 @@ class PlotWidget(QWidget):
                 apex_x = x_pixel + sub_width / 2
                 apex_y = to_pixel_y(y_val)
 
-                # Если значение отрицательное, меняем порядок отрисовки.
+                # Если значение отрицательное, смещаем конус влево и вверх.
                 if y_val >= 0:
                     # Сначала рисуем задний (смещенный) конус.
                     self.draw_cone(painter, apex_x + shift_x_pos, apex_y + shift_y_pos, x_pixel + shift_x_pos, zero_y + shift_y_pos, sub_width, ellipse_height, QColor(curve["color"]).darker(120))
                     # Затем рисуем передний конус.
                     self.draw_cone(painter, apex_x, apex_y, x_pixel, zero_y, sub_width, ellipse_height, curve["color"])
                 else:
-                    # Сначала рисуем передний конус.
-                    self.draw_cone(painter, apex_x, apex_y, x_pixel, zero_y, sub_width, ellipse_height, curve["color"])
-                    # Затем рисуем задний (смещенный) конус.
+                    # Сначала рисуем задний (смещенный) конус.
                     self.draw_cone(painter, apex_x + shift_x_neg, apex_y + shift_y_neg, x_pixel + shift_x_neg, zero_y + shift_y_neg, sub_width, ellipse_height, QColor(curve["color"]).darker(120))
+                    # Затем рисуем передний конус.
+                    self.draw_cone(painter, apex_x, apex_y, x_pixel, zero_y, sub_width, ellipse_height, curve["color"])
 
         self.draw_legend(painter)
 
