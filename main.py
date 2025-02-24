@@ -12,9 +12,9 @@ from functions import get_function_data
 
 # Цвета для функций: функция 1 – синий, функция 2 – зеленый, функция 3 – красный.
 FUNCTION_COLORS = {
-    1: Qt.blue,
-    2: Qt.green,
-    3: Qt.red
+    1: QColor(Qt.blue),
+    2: QColor(Qt.green),
+    3: QColor(Qt.red)
 }
 
 class PlotWidget(QWidget):
@@ -119,9 +119,12 @@ class PlotWidget(QWidget):
         # Высота эллиптического основания для эффекта 3D.
         ellipse_height = sub_width * 0.6
         # Смещение для имитации 3D (относительно каждого подконуса).
-        # Смещение вправо и вверх.
-        shift_x = sub_width * 0.2
-        shift_y = - ellipse_height * 0.5
+        # Смещение вправо и вверх для положительных значений.
+        shift_x_pos = sub_width * 0.2
+        shift_y_pos = -ellipse_height * 0.5
+        # Смещение влево и вниз для отрицательных значений.
+        shift_x_neg = -sub_width * 0.2
+        shift_y_neg = ellipse_height * 0.5
 
         # Рисуем конусы для каждой точки и каждой функции так, чтобы они не пересекались.
         for i in range(num_points):
@@ -139,56 +142,51 @@ class PlotWidget(QWidget):
                 apex_x = x_pixel + sub_width / 2
                 apex_y = to_pixel_y(y_val)
 
-                # Создаем боковую поверхность конуса как треугольник.
-                lateral_path = QPainterPath()
-                lateral_path.moveTo(apex_x, apex_y)
-                lateral_path.lineTo(x_pixel, zero_y)
-                lateral_path.lineTo(x_pixel + sub_width, zero_y)
-                lateral_path.lineTo(apex_x, apex_y)
-                lateral_path.closeSubpath()
-
-                # Смещенный (задний) конус для имитации 3D.
-                offset_path = QPainterPath(lateral_path)
-                offset_path.translate(shift_x, shift_y)
-
-                # Сначала рисуем задний (смещенный) конус.
-                painter.setBrush(QBrush(QColor(curve["color"]).darker(120)))
-                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
-                painter.drawPath(offset_path)
-
-                # Затем рисуем передний конус.
-                painter.setBrush(QBrush(curve["color"]))
-                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
-                painter.drawPath(lateral_path)
-
-                # Рисуем основание конуса в виде эллипса, которое лежит на оси X.
-                ellipse_rect = (x_pixel, zero_y - ellipse_height/2, sub_width, ellipse_height)
-                # Рисуем смещенную (заднюю) основу.
-                shifted_ellipse_rect = (
-                    ellipse_rect[0] + shift_x,
-                    ellipse_rect[1] + shift_y,
-                    ellipse_rect[2],
-                    ellipse_rect[3]
-                )
-                painter.setBrush(QBrush(QColor(curve["color"]).darker(115)))
-                painter.setPen(QPen(QColor(curve["color"]).darker(150), 2))
-                painter.drawEllipse(*shifted_ellipse_rect)
-                # Рисуем основное основание.
-                painter.drawEllipse(*ellipse_rect)
-
-                # Дополнительное выделение: полутень на основании.
-                highlight_color = QColor(curve["color"]).lighter(160)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(highlight_color))
+                # Если значение отрицательное, меняем порядок отрисовки.
                 if y_val >= 0:
-                    start_angle = 180 * 16
-                    span_angle = -180 * 16
+                    # Сначала рисуем задний (смещенный) конус.
+                    self.draw_cone(painter, apex_x + shift_x_pos, apex_y + shift_y_pos, x_pixel + shift_x_pos, zero_y + shift_y_pos, sub_width, ellipse_height, QColor(curve["color"]).darker(120))
+                    # Затем рисуем передний конус.
+                    self.draw_cone(painter, apex_x, apex_y, x_pixel, zero_y, sub_width, ellipse_height, curve["color"])
                 else:
-                    start_angle = 0
-                    span_angle = 180 * 16
-                painter.drawArc(*ellipse_rect, start_angle, span_angle)
+                    # Сначала рисуем передний конус.
+                    self.draw_cone(painter, apex_x, apex_y, x_pixel, zero_y, sub_width, ellipse_height, curve["color"])
+                    # Затем рисуем задний (смещенный) конус.
+                    self.draw_cone(painter, apex_x + shift_x_neg, apex_y + shift_y_neg, x_pixel + shift_x_neg, zero_y + shift_y_neg, sub_width, ellipse_height, QColor(curve["color"]).darker(120))
 
         self.draw_legend(painter)
+
+    def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width, height, color):
+        # Создаем боковую поверхность конуса как треугольник.
+        lateral_path = QPainterPath()
+        lateral_path.moveTo(apex_x, apex_y)
+        lateral_path.lineTo(base_x, base_y)
+        lateral_path.lineTo(base_x + width, base_y)
+        lateral_path.lineTo(apex_x, apex_y)
+        lateral_path.closeSubpath()
+
+        # Рисуем боковую поверхность.
+        painter.setBrush(QBrush(color))
+        painter.setPen(QPen(color.darker(150), 2))
+        painter.drawPath(lateral_path)
+
+        # Рисуем основание конуса в виде эллипса, которое лежит на оси X.
+        ellipse_rect = (base_x, base_y - height/2, width, height)
+        painter.setBrush(QBrush(color.darker(115)))
+        painter.setPen(QPen(color.darker(150), 2))
+        painter.drawEllipse(*ellipse_rect)
+
+        # Дополнительное выделение: полутень на основании.
+        highlight_color = color.lighter(160)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(highlight_color))
+        if apex_y < base_y:
+            start_angle = 180 * 16
+            span_angle = -180 * 16
+        else:
+            start_angle = 0
+            span_angle = 180 * 16
+        painter.drawArc(*ellipse_rect, start_angle, span_angle)
 
     def draw_legend(self, painter):
         legend_x = 20
