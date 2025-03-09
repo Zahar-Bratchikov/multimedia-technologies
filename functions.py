@@ -1,62 +1,34 @@
 import numpy as np
 
-def func1(start, end, num_points):
+def function_1(x):
     """
-    Генерирует данные для функции: 5*cos(x)
-    Входные данные:
-      start - начало интервала
-      end - конец интервала
-      num_points - количество точек
-    Выходные данные:
-      x, y, label – координаты точек и строковое представление функции.
+    5*cos(x)
     """
-    x = np.linspace(start, end, num_points)
-    y = 5 * np.cos(x)
-    label = "5*cos(x)"
-    return x, y, label
+    return 5 * np.cos(x)
 
-def func2(start, end, num_points):
+def function_2(x):
     """
-    Генерирует данные для функции: 10*sin(x) + 5*cos(2*x)
-    Входные данные:
-      start - начало интервала
-      end - конец интервала
-      num_points - количество точек
-    Выходные данные:
-      x, y, label – координаты точек и строковое представление функции.
+    10*sin(x) + 5*cos(2*x)
     """
-    x = np.linspace(start, end, num_points)
-    y = 10 * np.sin(x) + 5 * np.cos(2 * x)
-    label = "10*sin(x) + 5*cos(2*x)"
-    return x, y, label
+    return 10 * np.sin(x) + 5 * np.cos(2 * x)
 
-def func3(start, end, num_points):
+def function_3(x):
     """
-    Генерирует данные для функции: 10/(x-1)
-    Функция имеет точку разрыва при x = 1. При приближении к x=1 значение заменяется на NaN.
-    Входные данные:
-      start - начало интервала
-      end - конец интервала
-      num_points - количество точек
-    Выходные данные:
-      x, y, label – координаты точек и строковое представление функции.
+    10/(x-1)
     """
-    x = np.linspace(start, end, num_points)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        y = np.where(np.abs(x - 1) < 1e-6, np.nan, 10 / (x - 1))
-    label = "10/(x-1)"
-    return x, y, label
+    return 10 / (x - 1)
 
-def get_function_data(func_num, start, end, num_points):
-    """
-    Возвращает данные для построения диаграммы по заданному номеру функции.
-    Поддерживаемые номера: 1, 2, 3.
-    """
-    if func_num == 1:
-        return func1(start, end, num_points)
-    elif func_num == 2:
-        return func2(start, end, num_points)
-    elif func_num == 3:
-        return func3(start, end, num_points)
+def get_function_data(func_id, start, end, num_points):
+    x = np.linspace(start, end, num_points)
+    if func_id == 1:
+        y = function_1(x)
+        label = "Функция 1 (5*cos(x))"
+    elif func_id == 2:
+        y = function_2(x)
+        label = "Функция 2 (10*sin(x)+5*cos(2*x))"
+    elif func_id == 3:
+        y = function_3(x)
+        label = "Функция 3 (10/(x-1))"
     else:
-        raise ValueError("Неверный номер функции. Допустимые значения: 1, 2, 3.")
+        raise ValueError("Unknown function ID")
+    return x, y, label
