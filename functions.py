@@ -19,14 +19,18 @@ def function_3(x):
     # Use errstate to ignore divide warnings and set values near the singularity to np.nan.
     with np.errstate(divide='ignore', invalid='ignore'):
         y = 10 / (x - 1)
-        # When x is close to 1, set the result to NaN.
+        # Set values close to the singularity to NaN.
         y[np.abs(x - 1) < 1e-6] = np.nan
         return y
 
 def get_function_data(func_id, start, end, num_points):
-    # If the number of points exactly equals end - start + 1, use integer values.
-    if num_points == int(end - start) + 1:
-        x = np.arange(start, end + 1)
+    """
+    Generates x and y data for the selected function over the interval [start, end].
+    If the user-specified num_points equals (end - start + 1), then integer x-values are produced.
+    Otherwise, np.linspace is used so that the number of points matches exactly the user request.
+    """
+    if float(start).is_integer() and float(end).is_integer() and num_points == int(end - start) + 1:
+        x = np.arange(int(start), int(end) + 1)
     else:
         x = np.linspace(start, end, num_points)
     if func_id == 1:

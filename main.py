@@ -17,7 +17,6 @@ FUNCTION_COLORS = {
     3: QColor(Qt.red)
 }
 
-
 def get_available_functions():
     """
     Collects the three functions available in the functions module.
@@ -29,7 +28,6 @@ def get_available_functions():
             doc = func.__doc__.strip() if func.__doc__ else "No description"
             func_list.append((f"Функция {func_id} ({doc})", func_id))
     return func_list
-
 
 class PlotWidget(QWidget):
     def __init__(self):
@@ -56,6 +54,7 @@ class PlotWidget(QWidget):
                 margin_y = (all_y.max() - all_y.min()) * 0.1
                 computed_y_min = all_y.min() - margin_y
                 computed_y_max = all_y.max() + margin_y
+                # Ensure that y=0 is visible.
                 self.y_min = min(computed_y_min, 0)
                 self.y_max = max(computed_y_max, 0)
         self.update()
@@ -65,9 +64,9 @@ class PlotWidget(QWidget):
         Draws the diagram according to the following rules:
           1. A grid is drawn with extra margin and with labels along the bottom and right.
           2. The zero line (y=0) is highlighted.
-          3. The graphs are drawn as cones ("КОУСЫ") such that if the x-values are intended to be integer,
-             they are placed exactly at those integer points.
-             The lateral face and the base (an ellipse) share the same width.
+          3. The graphs are drawn as cones ("КОУСЫ"). If the generated x-values are integer,
+             they are snapped to integer positions so that the cone apex (center of the base)
+             is positioned exactly at those values.
           4. A legend is drawn with markers and labels.
         """
         painter = QPainter(self)
@@ -133,24 +132,23 @@ class PlotWidget(QWidget):
             return
 
         # 6. Build and draw the cones.
-        # Use a scale factor for the cone sizes.
         cone_scale = 0.7
-        # Assume that all function data share the same x array
+        # Use the x array from the first function as the reference.
         num_points = len(self.data[0]["x"])
         num_funcs = len(self.data)
 
-        # Group width is based on the plotting area. Each group of cones will be centered at a specific x.
+        # Group width in pixel space based on the plotting area.
         group_width = ((right_bound - left_bound) / (num_points * 1.5)) * cone_scale
-        # The lateral face and the base will have the same width.
+        # Each cone within a group will have a width.
         sub_width = group_width / num_funcs
-        ellipse_height = sub_width * 0.6  # base height
-        shift_x = sub_width * 0.05  # horizontal shift for any 3D effect (can be set zero to avoid offset)
-        shift_y = -ellipse_height * 2.5  # vertical shift (negative moves upward)
+        ellipse_height = sub_width * 0.6  # base height of the ellipse
+        shift_x = sub_width * 0.05  # horizontal shift for a 3D effect (can be zeroed if not needed)
+        shift_y = -ellipse_height * 2.5  # vertical shift; negative shifts upward
 
-        # Loop through each x value. If the computed x is nearly an integer, snap it.
         tol = 1e-6
         for i in range(num_points):
             x_val = self.data[0]["x"][i]
+            # If x_val is near an integer, round it.
             if abs(x_val - round(x_val)) < tol:
                 x_val = round(x_val)
             if not (self.user_x_start <= x_val <= self.user_x_end):
@@ -164,7 +162,7 @@ class PlotWidget(QWidget):
                 # Calculate horizontal offset so that cones from different functions are side by side.
                 x_offset = int((func_index - (num_funcs - 1) / 2) * sub_width) + int(func_index * shift_x)
                 x_pixel = x_base + x_offset
-                apex_x = x_pixel + sub_width // 2
+                apex_x = x_pixel + sub_width // 2  # apex (center of the cone) position
                 apex_y = to_pixel_y_plot(y_val) + int(func_index * shift_y)
                 base_y = to_pixel_y_plot(0) + int(func_index * shift_y)
                 base_points.append((x_pixel, base_y))
@@ -186,22 +184,21 @@ class PlotWidget(QWidget):
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width, height, color):
         """
         Draws a cone (КОУС) with a lateral face and a base.
-        The lateral face is drawn as a triangle and the base is an ellipse with the same width as that triangle.
+        The lateral face is drawn as a triangle and the base is an ellipse with the same width.
         """
-        # Draw lateral face as triangle.
+        # Draw lateral face as a filled triangle.
         path = QPainterPath()
         path.moveTo(apex_x, apex_y)
         path.lineTo(base_x, base_y)
         path.lineTo(base_x + width, base_y)
-        path.lineTo(apex_x, apex_y)
         path.closeSubpath()
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawPath(path)
 
-        # Draw the base as an ellipse with width equal to the lateral face.
+        # Draw the base as an ellipse.
         base_width = width
-        base_height = height * 0.5
+        base_height = height * 0.5  # half the ellipse height
         ellipse_rect = (int(base_x), int(base_y - base_height / 2), int(base_width), int(base_height))
         painter.setBrush(QBrush(color.darker(115)))
         painter.setPen(QPen(color.darker(150), 2))
@@ -221,7 +218,7 @@ class PlotWidget(QWidget):
 
     def draw_legend(self, painter):
         """
-        Draws a legend with a border, color markers, and text labels (in black).
+        Draws a legend with a border, color markers, and text labels.
         """
         legend_x = 20
         legend_y = 20
@@ -241,7 +238,6 @@ class PlotWidget(QWidget):
             painter.setPen(Qt.black)
             painter.drawText(legend_x + box_size + 5, current_y + box_size - 3, curve["label"])
             current_y += box_size + spacing
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -273,7 +269,6 @@ class MainWindow(QMainWindow):
         # Number of points.
         self.points_spin = QSpinBox()
         self.points_spin.setRange(1, 10000)
-        # For integer placement from -10 to 10 exactly, use 21 points.
         self.points_spin.setValue(21)
         controls_layout.addWidget(QLabel("Количество точек:"))
         controls_layout.addWidget(self.points_spin)
@@ -339,7 +334,6 @@ class MainWindow(QMainWindow):
                     "color": FUNCTION_COLORS.get(func_id, QColor(Qt.black))
                 })
         self.plot_widget.setData(data_list)
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
