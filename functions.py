@@ -16,23 +16,22 @@ def function_3(x):
     """
     10/(x-1)
     """
-    # Use errstate to ignore divide warnings and set values near the singularity to np.nan.
     with np.errstate(divide='ignore', invalid='ignore'):
         y = 10 / (x - 1)
-        # Set values close to the singularity to NaN.
         y[np.abs(x - 1) < 1e-6] = np.nan
         return y
 
 def get_function_data(func_id, start, end, num_points):
     """
     Generates x and y data for the selected function over the interval [start, end].
-    If the user-specified num_points equals (end - start + 1), then integer x-values are produced.
-    Otherwise, np.linspace is used so that the number of points matches exactly the user request.
+    The step is calculated as (end - start) / num_points.
+    Cones are plotted for x values:
+      x = start + i * step    for i in range(num_points)
+    This ensures that the first cone is drawn at 'start' and all cones are within [start, end].
     """
-    if float(start).is_integer() and float(end).is_integer() and num_points == int(end - start) + 1:
-        x = np.arange(int(start), int(end) + 1)
-    else:
-        x = np.linspace(start, end, num_points)
+    step = (end - start) / num_points
+    # Generate exactly num_points x-values starting from 'start'
+    x = np.array([start + i * step for i in range(num_points)])
     if func_id == 1:
         y = function_1(x)
         label = "Функция 1 (5*cos(x))"
