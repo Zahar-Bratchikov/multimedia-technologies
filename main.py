@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QDoubleSpinBox, QSpinBox, QLabel, QComboBox, QListView
 )
 from PySide6.QtGui import (
-    QPainter, QPen, QBrush, QFont, QPainterPath, QColor, QStandardItemModel, QStandardItem
+    QPainter, QPen, QBrush, QFont, QPainterPath, QColor, QStandardItemModel, QStandardItem, QFontMetrics
 )
 import functions
 
@@ -67,11 +67,11 @@ class PlotWidget(QWidget):
           1. A grid is drawn with extra margin and with labels along the bottom and right.
           2. The zero line (y=0) is highlighted.
           3. The graphs are drawn as cones ("КОУСЫ"). A fixed step is computed as (end - start)/num_points.
-             The first cone's apex (i.e. the center of the base) is drawn at 'start',
-             and subsequent cones are placed at start + i*step.
-             For each group (i.e. each x-value), if multiple functions exist the cones are offset horizontally,
-             and lines are drawn connecting their base centers.
-          4. A legend is drawn with markers and text labels.
+             The first cone's apex (i.e., the center of the base) is drawn at 'start',
+             and subsequent cones are placed at start + i * step.
+             For each group (i.e., each x-value), if multiple functions exist the cones are offset horizontally,
+             and lines are drawn connecting the base centers.
+          4. A legend is drawn with markers and text labels. The legend field width adjusts based on the longest label.
         """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -136,8 +136,6 @@ class PlotWidget(QWidget):
             return
 
         # 6. Build and draw the cones.
-        # Here we assume that the x-array from the first function was generated using:
-        # x = [start + i * step for i in range(num_points)]
         num_points = len(self.data[0]["x"])
         num_funcs = len(self.data)
 
@@ -154,26 +152,23 @@ class PlotWidget(QWidget):
         tol = 1e-6
         # For each x value.
         for i in range(num_points):
-            # Use the x value that was generated; convert to pixels.
             center_pixel = to_pixel_x_plot(self.data[0]["x"][i])
-            # List to store the base centers (for connecting lines)
             base_centers = []
             for func_index, curve in enumerate(self.data):
                 y_val = curve["y"][i]
                 if np.isnan(y_val):
                     continue
-                # For multiple functions, offset horizontally.
+                # Offset cones for multiple functions.
                 x_offset = int((func_index - (num_funcs - 1) / 2) * sub_width) + int(func_index * shift_x)
-                apex_x = center_pixel + x_offset  # we now place the apex at the center plus offset
-                # The base's left coordinate is computed so that the cone's apex is at the center of the base.
-                base_x = apex_x - sub_width // 2
+                apex_x = center_pixel + x_offset  # apex is at the center.
+                base_x = apex_x - sub_width // 2  # adjust left coordinate so apex is center of base.
                 apex_y = to_pixel_y_plot(y_val) + int(func_index * shift_y)
                 base_y = to_pixel_y_plot(0) + int(func_index * shift_y)
-                # Save the base center coordinate: center of base = (base_x + sub_width/2, base_y)
+                # Save base center for connecting lines.
                 base_center = (base_x + sub_width // 2, base_y)
                 base_centers.append(base_center)
                 self.draw_cone(painter, apex_x, apex_y, base_x, base_y, sub_width, ellipse_height, curve["color"])
-            # Draw connecting lines between bases (if there are multiple cones at this x-position)
+            # Draw connecting line between base centers if multiple functions.
             if len(base_centers) > 1:
                 painter.setPen(QPen(Qt.black, 1))
                 for j in range(len(base_centers) - 1):
@@ -191,7 +186,7 @@ class PlotWidget(QWidget):
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width, height, color):
         """
         Draws a cone ("КОУС") with a lateral face and a base.
-        The lateral face is drawn as a triangle and the base is drawn as an ellipse.
+        The lateral face is drawn as a triangle and the base is an ellipse with the same width.
         """
         # Draw lateral face.
         path = QPainterPath()
@@ -203,7 +198,7 @@ class PlotWidget(QWidget):
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawPath(path)
 
-        # Draw base as an ellipse.
+        # Draw base as ellipse.
         base_width = width
         base_height = height * 0.5  # half height for ellipse
         ellipse_rect = (int(base_x), int(base_y - base_height / 2), int(base_width), int(base_height))
@@ -226,25 +221,39 @@ class PlotWidget(QWidget):
     def draw_legend(self, painter):
         """
         Draws a legend with a border, color markers, and text labels.
+        The legend box width adjusts based on the width of the longest label.
         """
+        # Set font for the legend.
+        font = QFont("Arial", 10)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        padding = 10
+        marker_size = 15
+        spacing = 8
+        max_label_width = 0
+
+        # Compute maximum label width.
+        for curve in self.data:
+            text = curve["label"]
+            width_text = metrics.horizontalAdvance(text)
+            if width_text > max_label_width:
+                max_label_width = width_text
+
+        legend_width = padding * 2 + marker_size + spacing + max_label_width
+        legend_height = padding * 2 + len(self.data) * (marker_size + spacing) - spacing
+
         legend_x = 20
         legend_y = 20
-        box_size = 15
-        spacing = 8
-        num_funcs = len(self.data)
-        legend_height = num_funcs * (box_size + spacing) + spacing
-        legend_width = 180
 
         painter.setPen(QPen(Qt.black, 1))
-        painter.drawRect(legend_x - 5, legend_y - 5, legend_width, legend_height)
-        current_y = legend_y
-        painter.setFont(QFont("Arial", 10))
+        painter.drawRect(legend_x, legend_y, legend_width, legend_height)
+        current_y = legend_y + padding
         for curve in self.data:
             painter.setBrush(QBrush(curve["color"]))
-            painter.drawRect(legend_x, current_y, box_size, box_size)
+            painter.drawRect(legend_x + padding, current_y, marker_size, marker_size)
             painter.setPen(Qt.black)
-            painter.drawText(legend_x + box_size + 5, current_y + box_size - 3, curve["label"])
-            current_y += box_size + spacing
+            painter.drawText(legend_x + padding + marker_size + spacing, current_y + marker_size - 3, curve["label"])
+            current_y += marker_size + spacing
 
 
 class MainWindow(QMainWindow):
@@ -257,7 +266,7 @@ class MainWindow(QMainWindow):
         self.plot_widget = PlotWidget()
         main_layout.addWidget(self.plot_widget)
 
-        # Control panel for parameters.
+        # Control panel for input parameters.
         controls_layout = QHBoxLayout()
 
         self.start_spin = QDoubleSpinBox()
@@ -304,7 +313,7 @@ class MainWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Timer for updates.
+        # Timer for updating the plot.
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.update_plot)
@@ -326,7 +335,7 @@ class MainWindow(QMainWindow):
         self.plot_widget.user_x_start = start
         self.plot_widget.user_x_end = end
         data_list = []
-        # Gather data for each selected function.
+        # Collect data for the selected functions.
         for i in range(self.func_model.rowCount()):
             item = self.func_model.item(i)
             if item.checkState() == Qt.Checked:
