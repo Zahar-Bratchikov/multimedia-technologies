@@ -16,7 +16,7 @@ FUNCTION_COLORS = {
     1: QColor(Qt.blue),
     2: QColor(Qt.green),
     3: QColor(Qt.red),
-    4: QColor(Qt.yellow)
+    # 4: QColor(Qt.magenta)
 }
 
 
@@ -26,7 +26,7 @@ def get_available_functions():
     Возвращает список кортежей (подпись, id функции).
     """
     func_list = []
-    for func_id in range(1, 4):
+    for func_id in range(1, 4):  # при добавлении функций увеличить конец рэнжа
         func = getattr(functions, f"function_{func_id}", None)
         if callable(func):
             doc = func.__doc__.strip() if func.__doc__ else "Нет описания"
@@ -69,7 +69,7 @@ class PlotWidget(QWidget):
         Рисует диаграмму согласно следующим правилам:
           1. Отрисовывается сетка с дополнительным отступом и подписанными осями.
           2. Выделяется ось y=0.
-          3. Графики функций отрисовываются в виде конусов ("КОУСЫ"). Шаг вычисляется по формуле:
+          3. Графики функций отрисовываются в виде конусов. Шаг вычисляется по формуле:
              step = (end - start) / num_points.
              Первый конус строится в точке 'start', последующие – с шагом step.
              Если для одного x-значения построено несколько конусов, они смещаются по горизонтали,
@@ -158,7 +158,6 @@ class PlotWidget(QWidget):
         shift_x = sub_width * 0.05  # горизонтальное смещение для эффекта 3D
         shift_y = -ellipse_height * 2.5  # вертикальное смещение (отрицательное смещение поднимает вверх)
 
-        tol = 1e-6
         # Для каждого x-значения.
         for i in range(num_points):
             # Находим центральный пиксель для текущего x.
@@ -195,8 +194,8 @@ class PlotWidget(QWidget):
 
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width, height, color):
         """
-        Отрисовывает конус ("КОУС") с боковой гранью и основанием.
-        Боковая грань рисуется треугольником, основание – эллипсом с той же шириной.
+        Отрисовывает конус.
+        Боковая грань рисуется треугольником, основание – эллипсом.
         """
         # Рисуем боковую грань (треугольник).
         path = QPainterPath()
@@ -215,18 +214,6 @@ class PlotWidget(QWidget):
         painter.setBrush(QBrush(color.darker(115)))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawEllipse(*ellipse_rect)
-
-        # Добавляем акцент (блик) на основание.
-        highlight_color = color.lighter(160)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(highlight_color))
-        if apex_y < base_y:
-            start_angle = 180 * 16
-            span_angle = -180 * 16
-        else:
-            start_angle = 0
-            span_angle = 180 * 16
-        painter.drawArc(*ellipse_rect, start_angle, span_angle)
 
     def draw_legend(self, painter):
         """

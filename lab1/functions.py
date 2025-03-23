@@ -26,11 +26,11 @@ def function_3(x):
         return y
 
 
-def function_4(x):
-    """
-    x**2
-    """
-    return x ** 2
+# def function_4(x):
+#     """
+#     x**2
+#     """
+#     return x ** 2
 
 
 def get_function_data(func_id, start, end, num_points):
@@ -53,9 +53,9 @@ def get_function_data(func_id, start, end, num_points):
     elif func_id == 3:
         y = function_3(x)
         label = "Функция 3 (10/(x-1))"
-    elif func_id == 4:
-        y = function_4(x)
-        label = "Функция 4 (x ** 2)"
+    # elif func_id == 4:
+    #     y = function_4(x)
+    #     label = "Функция 4 (x ** 2)"
     else:
         raise ValueError("Неизвестный идентификатор функции")
     return x, y, label
