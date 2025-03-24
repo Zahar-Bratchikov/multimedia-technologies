@@ -1,4 +1,5 @@
 import sys
+import math
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -11,22 +12,23 @@ from PySide6.QtGui import (
 )
 from lab1 import functions
 
-# Определяем цвета для каждой функции.
+# Определяем цвета для функций.
 FUNCTION_COLORS = {
     1: QColor(Qt.blue),
     2: QColor(Qt.green),
     3: QColor(Qt.red),
-    # 4: QColor(Qt.magenta)
+    4: QColor(Qt.magenta)
 }
 
 
 def get_available_functions():
     """
     Собирает список доступных функций из модуля functions.
-    Возвращает список кортежей (подпись, id функции).
+    Для каждой функции формируется подпись на основе документации.
+    Возвращает список кортежей (подпись, идентификатор функции).
     """
     func_list = []
-    for func_id in range(1, 4):  # при добавлении функций увеличить конец рэнжа
+    for func_id in range(1, 4):
         func = getattr(functions, f"function_{func_id}", None)
         if callable(func):
             doc = func.__doc__.strip() if func.__doc__ else "Нет описания"
@@ -40,144 +42,240 @@ class PlotWidget(QWidget):
         self.setMinimumSize(800, 600)
         # Данные для построения: список словарей с ключами "x", "y", "label", "color"
         self.data = []
-        # Интервал по оси Y пересчитывается на основе данных функций.
+        # Диапазон оси Y (будет пересчитан на основе данных)
         self.y_min = -10
         self.y_max = 10
         # Интервал по оси X, задаваемый пользователем.
         self.user_x_start = -10
         self.user_x_end = 10
+        # Количество точек (если данных нет, используется значение по умолчанию)
+        self.default_points = 21
+
+        # Конфигурационные параметры:
+        self.extra_margin = 1  # Дополнительный отступ для сетки
+        self.cone_scale = 0.7  # Коэффициент, определяющий используемую ширину по оси X
+        self.shift_x_factor = 0  # Горизонтальный сдвиг отключён (для равных ячеек)
+        self.shift_y_factor = 2.5  # Вертикальный сдвиг (будет использоваться с отрицательным знаком)
+        self.font_family = "Arial"  # Название шрифта для подписей
+        self.font_size = 8  # Размер шрифта для подписей осей
+        self.legend_font_size = 10  # Размер шрифта для легенды
+        self.small_value = 1e-6  # Малое значение для предотвращения деления на ноль
+        # Если задан фиксированный размер ячейки (в пикселях), он используется вместо динамического расчёта.
+        self.fixed_base_width = None
+        # Отношение ширины основания конуса к ширине ячейки (примерно 2/3)
+        self.cone_base_ratio = 2 / 3
 
     def setData(self, data_list):
         """
-        Устанавливает данные для построения и пересчитывает диапазон y так, чтобы y=0 было видно.
+        Устанавливает данные для построения и пересчитывает диапазон оси Y так,
+        чтобы отображался нулевой уровень.
         """
         self.data = data_list
         if self.data:
-            # Собираем все валидные y-значения из всех наборов данных.
+            # Объединяем все валидные значения Y.
             all_y = np.concatenate([d["y"][~np.isnan(d["y"])] for d in self.data])
             if len(all_y) > 0:
                 margin_y = (all_y.max() - all_y.min()) * 0.1
                 computed_y_min = all_y.min() - margin_y
                 computed_y_max = all_y.max() + margin_y
-                # Обеспечиваем отображение y=0.
                 self.y_min = min(computed_y_min, 0)
                 self.y_max = max(computed_y_max, 0)
         self.update()
 
     def paintEvent(self, event):
         """
-        Рисует диаграмму согласно следующим правилам:
-          1. Отрисовывается сетка с дополнительным отступом и подписанными осями.
-          2. Выделяется ось y=0.
-          3. Графики функций отрисовываются в виде конусов. Шаг вычисляется по формуле:
-             step = (end - start) / num_points.
-             Первый конус строится в точке 'start', последующие – с шагом step.
-             Если для одного x-значения построено несколько конусов, они смещаются по горизонтали,
-             а их основания соединяются линиями.
-          4. Легенда рисуется с маркерами и подписями. Поле легенды расширяется под самую длинную подпись.
+        Отрисовывает диаграмму функций в виде конусов.
+        1. Рисует фон и горизонтальную сетку с автоматически вычисляемым шагом.
+           Если выбрана одна точка, линии привязываются к вершинам конусов.
+        2. Рисует вертикальную сетку (включая ось x = 0 с подписью "0.00").
+           Дополнительно слева и справа рисуется по одной линии с тем же шагом,
+           что и у основной сетки.
+        3. Отрисовывает конусы, где основание конуса имеет ширину ≈ 2/3 ширины ячейки.
+        4. Рисует легенду.
         """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        width, height = self.width(), self.height()
+        w, h = self.width(), self.height()
 
-        # 1. Определяем параметры сетки с дополнительным отступом.
-        extra_margin = 1  # дополнительный отступ в единицах координат
-        grid_x_min = self.user_x_start - extra_margin
-        grid_x_max = self.user_x_end + extra_margin
-        grid_y_min = self.y_min - extra_margin
-        grid_y_max = self.y_max + extra_margin
-        grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else 1e-6
-        grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else 1e-6
+        # Вычисляем параметры базовой сетки.
+        grid_x_min = self.user_x_start - self.extra_margin
+        grid_x_max = self.user_x_end + self.extra_margin
+        grid_y_min = self.y_min - self.extra_margin
+        grid_y_max = self.y_max + self.extra_margin
+        grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else self.small_value
+        grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else self.small_value
 
         def to_pixel_x_grid(x):
-            # Перевод координаты x в пиксели для сетки
-            return int((x - grid_x_min) / grid_x_range * width)
+            return int((x - grid_x_min) / grid_x_range * w)
 
         def to_pixel_y_grid(y):
-            # Перевод координаты y в пиксели для сетки
-            return int(height - (y - grid_y_min) / grid_y_range * height)
+            return int(h - (y - grid_y_min) / grid_y_range * h)
 
-        # 2. Определяем область построения (без учета дополнительного отступа)
-        plot_x_range = self.user_x_end - self.user_x_start if self.user_x_end != self.user_x_start else 1e-6
+        # Определяем область построения без дополнительного отступа.
+        plot_x_range = self.user_x_end - self.user_x_start if self.user_x_end != self.user_x_start else self.small_value
         left_bound = to_pixel_x_grid(self.user_x_start)
         right_bound = to_pixel_x_grid(self.user_x_end)
         top_bound = to_pixel_y_grid(self.y_max)
         bottom_bound = to_pixel_y_grid(self.y_min)
 
         def to_pixel_x_plot(x):
-            # Преобразует координату x в пиксели для области графика
             return int(left_bound + (x - self.user_x_start) / plot_x_range * (right_bound - left_bound))
 
         def to_pixel_y_plot(y):
-            # Преобразует координату y в пиксели для области графика
             return int(bottom_bound - (y - self.y_min) / (self.y_max - self.y_min) * (bottom_bound - top_bound))
 
-        # 3. Рисуем фон и сетку.
-        painter.fillRect(self.rect(), QBrush(Qt.white))
-        painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-        for x_val in range(int(np.floor(grid_x_min)), int(np.ceil(grid_x_max)) + 1):
-            x_pix = to_pixel_x_grid(x_val)
-            painter.drawLine(x_pix, 0, x_pix, height)
-            painter.setPen(QPen(Qt.black, 1))
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(x_pix - 10, height - 5, f"{x_val}")
-            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-        for y_val in range(int(np.floor(grid_y_min)), int(np.ceil(grid_y_max)) + 1):
-            y_pix = to_pixel_y_grid(y_val)
-            painter.drawLine(0, y_pix, width, y_pix)
-            painter.setPen(QPen(Qt.black, 1))
-            painter.setFont(QFont("Arial", 8))
-            painter.drawText(width - 30, y_pix + 5, f"{y_val}")
-            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        # Функция для вычисления "приятного" шага для оси Y.
+        def niceNum(x, round_val):
+            if x == 0:
+                return 0
+            exp = math.floor(math.log10(x))
+            f = x / (10 ** exp)
+            if round_val:
+                if f < 1.5:
+                    nf = 1
+                elif f < 3:
+                    nf = 2
+                elif f < 7:
+                    nf = 5
+                else:
+                    nf = 10
+            else:
+                if f <= 1:
+                    nf = 1
+                elif f <= 2:
+                    nf = 2
+                elif f <= 5:
+                    nf = 5
+                else:
+                    nf = 10
+            return nf * (10 ** exp)
 
-        # 4. Рисуем оси, выделяя линию y=0.
+        # Рисуем фон.
+        painter.fillRect(self.rect(), QBrush(Qt.white))
+
+        # Отрисовка горизонтальной сетки.
+        if self.data and len(self.data[0]["x"]) == 1:
+            # При одной точке привязываем линии к вершинам конусов.
+            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+            for func_index, curve in enumerate(self.data):
+                base_y = to_pixel_y_plot(0)
+                shift_y_val = to_pixel_y_plot(curve["y"][0]) - base_y
+                apex_y_pix = to_pixel_y_plot(curve["y"][0]) + int(func_index * shift_y_val)
+                painter.drawLine(0, apex_y_pix, w, apex_y_pix)
+                painter.setPen(QPen(Qt.black, 1))
+                painter.drawText(w - 40, apex_y_pix + 5, f"{curve['y'][0]:.2f}")
+                painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        else:
+            # Автоматически вычисляем шаг для горизонтальной сетки.
+            y_range = grid_y_max - grid_y_min
+            target_lines = 5  # Желательное количество линий
+            step = niceNum(y_range / target_lines, True)
+            tick_start = math.floor(grid_y_min / step) * step
+            tick_end = math.ceil(grid_y_max / step) * step
+            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+            current_tick = tick_start
+            while current_tick <= tick_end:
+                y_pix = to_pixel_y_grid(current_tick)
+                painter.drawLine(0, y_pix, w, y_pix)
+                painter.setPen(QPen(Qt.black, 1))
+                painter.setFont(QFont(self.font_family, self.font_size))
+                painter.drawText(w - 40, y_pix + 5, f"{current_tick:.2f}")
+                painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+                current_tick += step
+
+        # Рисуем горизонтальную ось: y = 0.
         painter.setPen(QPen(Qt.black, 2))
         zero_y_pix = to_pixel_y_grid(0)
-        painter.drawLine(0, zero_y_pix, width, zero_y_pix)
-        if grid_x_min <= 0 <= grid_x_max:
-            x_zero_pix = to_pixel_x_grid(0)
-            painter.drawLine(x_zero_pix, 0, x_zero_pix, height)
+        painter.drawLine(0, zero_y_pix, w, zero_y_pix)
 
-        # 5. Если данных нет, дальнейшая отрисовка не производится.
+        # Определяем значения x для вертикальных линий.
+        if self.data:
+            num_points = len(self.data[0]["x"])
+            x_array = self.data[0]["x"]
+        else:
+            num_points = self.default_points
+            x_array = np.linspace(self.user_x_start, self.user_x_end, num_points)
+
+        # Рисуем вертикальную сетку для основных значений.
+        painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+        painter.setFont(QFont(self.font_family, self.font_size))
+        for x_val in x_array:
+            x_pix = to_pixel_x_plot(x_val)
+            painter.drawLine(x_pix, 0, x_pix, h)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(x_pix - 20, h - 5, f"{x_val:.2f}")
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+
+        # Вычисляем шаг по оси X для основных вертикальных линий.
+        if len(x_array) > 1:
+            step_x = (self.user_x_end - self.user_x_start) / (len(x_array) - 1)
+        else:
+            step_x = 0
+
+        # Рисуем дополнительную вертикальную линию слева.
+        extra_left = self.user_x_start - step_x
+        # Используем преобразование через to_pixel_x_grid, чтобы сохранить масштаб сетки.
+        if extra_left >= (self.user_x_start - self.extra_margin):
+            x_extra_left = to_pixel_x_grid(extra_left)
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+            painter.drawLine(x_extra_left, 0, x_extra_left, h)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(x_extra_left - 20, h - 5, f"{extra_left:.2f}")
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+
+        # Рисуем дополнительную вертикальную линию справа.
+        extra_right = self.user_x_end + step_x
+        if extra_right <= (self.user_x_end + self.extra_margin):
+            x_extra_right = to_pixel_x_grid(extra_right)
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+            painter.drawLine(x_extra_right, 0, x_extra_right, h)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(x_extra_right - 20, h - 5, f"{extra_right:.2f}")
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+
+        # Рисуем вертикальную ось: x = 0.
+        x_zero = to_pixel_x_plot(0)
+        x_zero = max(0, min(w, x_zero))
+        painter.setPen(QPen(Qt.black, 2))
+        painter.drawLine(x_zero, 0, x_zero, h)
+        painter.setPen(QPen(Qt.black, 1))
+        painter.drawText(x_zero - 20, h - 5, "0.00")
+
         if not self.data:
             return
 
-        # 6. Построение и отрисовка конусов.
-        # Предполагается, что массив x из первой функции сгенерирован как:
-        # x = [start + i * step for i in range(num_points)]
+        # Отрисовка конусов.
         num_points = len(self.data[0]["x"])
         num_funcs = len(self.data)
+        # Вычисляем ширину группы для каждой точки (без дополнительных множителей)
+        group_width = ((w - left_bound) / num_points) * self.cone_scale
+        # Определяем ширину одной ячейки.
+        if self.fixed_base_width is not None:
+            cell_width = self.fixed_base_width
+        else:
+            cell_width = group_width / num_funcs
+        # Ширина основания конуса = 2/3 от ширины ячейки.
+        cone_base_width = cell_width * self.cone_base_ratio
+        ellipse_height = int(cone_base_width * 0.6)
+        shift_x = 0  # Дополнительный горизонтальный сдвиг отсутствует
+        shift_y = -int(ellipse_height * self.shift_y_factor)
 
-        # Вычисляем ширину группы в пикселях (влияет на размер конусов)
-        group_width = ((right_bound - left_bound) / (num_points * 1.5))
-        cone_scale = 0.7
-        group_width *= cone_scale
-        # Ширина одного конуса в пикселях.
-        sub_width = group_width / num_funcs
-        ellipse_height = sub_width * 0.6  # высота эллиптического основания
-        shift_x = sub_width * 0.05  # горизонтальное смещение для эффекта 3D
-        shift_y = -ellipse_height * 2.5  # вертикальное смещение (отрицательное смещение поднимает вверх)
-
-        # Для каждого x-значения.
         for i in range(num_points):
-            # Находим центральный пиксель для текущего x.
             center_pixel = to_pixel_x_plot(self.data[0]["x"][i])
-            base_centers = []  # список для хранения центров оснований конусов
+            base_centers = []
             for func_index, curve in enumerate(self.data):
                 y_val = curve["y"][i]
                 if np.isnan(y_val):
                     continue
-                # Если строится несколько конусов, смещаем их по горизонтали.
-                x_offset = int((func_index - (num_funcs - 1) / 2) * sub_width) + int(func_index * shift_x)
-                apex_x = center_pixel + x_offset  # вершина конуса расположена по центру с учетом смещения
-                base_x = apex_x - sub_width // 2  # вычисляем левую координату основания, чтобы вершина была в середине
-                apex_y = to_pixel_y_plot(y_val) + int(func_index * shift_y)
-                base_y = to_pixel_y_plot(0) + int(func_index * shift_y)
-                # Сохраняем координаты центра основания для последующего соединения линиями
-                base_center = (base_x + sub_width // 2, base_y)
-                base_centers.append(base_center)
-                self.draw_cone(painter, apex_x, apex_y, base_x, base_y, sub_width, ellipse_height, curve["color"])
-            # Если для одного x-значения построено несколько конусов, соединяем их основания линиями.
+                # Каждая функция занимает свою ячейку ширины cell_width.
+                x_offset = int((func_index - (num_funcs - 1) / 2) * cell_width)
+                apex_x = center_pixel + x_offset
+                base_x = apex_x - int(cone_base_width / 2)
+                apex_y = to_pixel_y_plot(y_val) + func_index * shift_y
+                base_y = to_pixel_y_plot(0) + func_index * shift_y
+                base_centers.append((base_x + int(cone_base_width / 2), base_y))
+                self.draw_cone(painter, apex_x, apex_y, base_x, base_y, int(cone_base_width), ellipse_height,
+                               curve["color"])
             if len(base_centers) > 1:
                 painter.setPen(QPen(Qt.black, 1))
                 for j in range(len(base_centers) - 1):
@@ -185,73 +283,70 @@ class PlotWidget(QWidget):
                     p2 = base_centers[j + 1]
                     painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
 
-        # 7. Рисуем ось X поверх всего.
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(0, zero_y_pix, width, zero_y_pix)
-
-        # 8. Рисуем легенду.
+        painter.drawLine(0, zero_y_pix, w, zero_y_pix)
         self.draw_legend(painter)
 
-    def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width, height, color):
+    def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width_val, height_val, color):
         """
-        Отрисовывает конус.
-        Боковая грань рисуется треугольником, основание – эллипсом.
+        Отрисовывает конус с треугольной боковой гранью и эллиптическим основанием.
         """
-        # Рисуем боковую грань (треугольник).
         path = QPainterPath()
         path.moveTo(apex_x, apex_y)
         path.lineTo(base_x, base_y)
-        path.lineTo(base_x + width, base_y)
+        path.lineTo(base_x + width_val, base_y)
         path.closeSubpath()
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawPath(path)
 
-        # Рисуем основание в виде эллипса.
-        base_width = width
-        base_height = height * 0.5  # половина высоты для эллипса
+        base_width = width_val
+        base_height = int(height_val * 0.5)
         ellipse_rect = (int(base_x), int(base_y - base_height / 2), int(base_width), int(base_height))
         painter.setBrush(QBrush(color.darker(115)))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawEllipse(*ellipse_rect)
 
+        highlight_color = color.lighter(160)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(highlight_color))
+        if apex_x < base_x:
+            start_angle = 180 * 16
+            span_angle = -180 * 16
+        else:
+            start_angle = 0
+            span_angle = 180 * 16
+        painter.drawArc(*ellipse_rect, start_angle, span_angle)
+
     def draw_legend(self, painter):
         """
-        Рисует легенду с рамкой, цветными маркерами и подписями.
-        Ширина поля легенды подстраивается под самую длинную подпись.
+        Рисует легенду с подписями функций. Ширина легенды рассчитывается на основе максимальной ширины подписи.
         """
-        # Устанавливаем шрифт для легенды.
-        font = QFont("Arial", 10)
+        font = QFont(self.font_family, self.legend_font_size)
         painter.setFont(font)
         metrics = QFontMetrics(font)
         padding = 10
         marker_size = 15
         spacing = 8
         max_label_width = 0
-
-        # Вычисляем максимальную ширину подписи.
         for curve in self.data:
             text = curve["label"]
             width_text = metrics.horizontalAdvance(text)
             if width_text > max_label_width:
                 max_label_width = width_text
-
         legend_width = padding * 2 + marker_size + spacing + max_label_width
         legend_height = padding * 2 + len(self.data) * (marker_size + spacing) - spacing
-
         legend_x = 20
         legend_y = 20
-
         painter.setPen(QPen(Qt.black, 1))
         painter.drawRect(legend_x, legend_y, legend_width, legend_height)
         current_y = legend_y + padding
         for curve in self.data:
-            # Рисуем маркер цвета.
             painter.setBrush(QBrush(curve["color"]))
             painter.drawRect(legend_x + padding, current_y, marker_size, marker_size)
             painter.setPen(Qt.black)
-            # Рисуем текст подписи.
-            painter.drawText(legend_x + padding + marker_size + spacing, current_y + marker_size - 3, curve["label"])
+            painter.drawText(legend_x + padding + marker_size + spacing,
+                             current_y + marker_size - 3, curve["label"])
             current_y += marker_size + spacing
 
 
@@ -260,36 +355,25 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Лабораторная работа №1: Диаграмма функций (PySide)")
         self.resize(1000, 800)
-
         main_layout = QVBoxLayout()
         self.plot_widget = PlotWidget()
         main_layout.addWidget(self.plot_widget)
-
-        # Панель управления для ввода параметров.
         controls_layout = QHBoxLayout()
-
-        # Начало интервала.
         self.start_spin = QDoubleSpinBox()
         self.start_spin.setRange(-1000, 1000)
         self.start_spin.setValue(-10)
         controls_layout.addWidget(QLabel("Начало интервала:"))
         controls_layout.addWidget(self.start_spin)
-
-        # Конец интервала.
         self.end_spin = QDoubleSpinBox()
         self.end_spin.setRange(-1000, 1000)
         self.end_spin.setValue(10)
         controls_layout.addWidget(QLabel("Конец интервала:"))
         controls_layout.addWidget(self.end_spin)
-
-        # Количество точек.
         self.points_spin = QSpinBox()
         self.points_spin.setRange(1, 10000)
         self.points_spin.setValue(20)
         controls_layout.addWidget(QLabel("Количество точек:"))
         controls_layout.addWidget(self.points_spin)
-
-        # Выбор функций.
         self.func_combo = QComboBox()
         self.func_combo.setView(QListView())
         self.func_combo.setEditable(True)
@@ -309,36 +393,32 @@ class MainWindow(QMainWindow):
         self.func_combo.setModel(self.func_model)
         controls_layout.addWidget(QLabel("Функции (выберите):"))
         controls_layout.addWidget(self.func_combo)
-
         main_layout.addLayout(controls_layout)
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
-
-        # Таймер для обновления графика.
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.update_plot)
-
         self.start_spin.valueChanged.connect(self.schedule_update)
         self.end_spin.valueChanged.connect(self.schedule_update)
         self.points_spin.valueChanged.connect(self.schedule_update)
         self.func_model.itemChanged.connect(self.schedule_update)
-
         self.update_plot()
 
     def schedule_update(self):
         self.update_timer.start(200)
 
     def update_plot(self):
-        # Получаем параметры из панели управления.
         start = self.start_spin.value()
         end = self.end_spin.value()
         num_points = self.points_spin.value()
+        if num_points < 2:
+            num_points = 1  # Если выбрана одна точка, размещаем её в центре
         self.plot_widget.user_x_start = start
         self.plot_widget.user_x_end = end
+        self.plot_widget.default_points = num_points
         data_list = []
-        # Собираем данные для выбранных функций.
         for i in range(self.func_model.rowCount()):
             item = self.func_model.item(i)
             if item.checkState() == Qt.Checked:
