@@ -12,6 +12,7 @@ def function_2(x):
     """
     Вычисляет 10 * sin(x) + 5 * cos(2 * x)
     """
+    #return 5 * np.cos(x)
     return 10 * np.sin(x) + 5 * np.cos(2 * x)
 
 
@@ -20,6 +21,7 @@ def function_3(x):
     Вычисляет 10 / (x - 1) с обработкой деления на 0.
     Если модуль (x-1) меньше 1e-6, возвращается NaN.
     """
+    #return 5 * np.cos(x)
     with np.errstate(divide='ignore', invalid='ignore'):
         y = 10 / (x - 1)
         y[np.abs(x - 1) < 1e-6] = np.nan

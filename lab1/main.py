@@ -10,7 +10,7 @@ from PySide6.QtGui import (
     QPainter, QPen, QBrush, QFont, QPainterPath, QColor,
     QStandardItemModel, QStandardItem, QFontMetrics
 )
-from lab1 import functions
+import functions
 
 # Определяем цвета для функций.
 FUNCTION_COLORS = {
@@ -95,13 +95,23 @@ class PlotWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
+        # Определяем отступы для осей и подписей
+        margin_left = 60  # Отступ слева для подписей оси Y
+        margin_right = 40  # Отступ справа для подписей оси Y
+        margin_bottom = 40  # Отступ снизу для подписей оси X
+        margin_top = 20  # Отступ сверху
+
+        # Вычисляем рабочую область для графика
+        plot_width = w - margin_left - margin_right
+        plot_height = h - margin_top - margin_bottom
+
         # Ось Y строится с дополнительным отступом
         grid_y_min = self.y_min - self.extra_margin
         grid_y_max = self.y_max + self.extra_margin
         grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else self.small_value
 
         def to_pixel_y(y):
-            return int(h - (y - grid_y_min) / grid_y_range * h)
+            return int(h - margin_bottom - (y - grid_y_min) / grid_y_range * plot_height)
 
         # Функция для вычисления "приятного" шага для оси Y.
         def niceNum(x, round_val):
@@ -139,9 +149,9 @@ class PlotWidget(QWidget):
                 base_y = to_pixel_y(0)
                 shift_y = to_pixel_y(curve["y"][0]) - base_y
                 y_pos = to_pixel_y(curve["y"][0]) + int(func_index * shift_y)
-                painter.drawLine(0, y_pos, w, y_pos)
+                painter.drawLine(margin_left, y_pos, w - margin_right, y_pos)
                 painter.setPen(QPen(Qt.black, 1))
-                painter.drawText(w - 40, y_pos + 5, f"{curve['y'][0]:.2f}")
+                painter.drawText(w - margin_right + 5, y_pos + 5, f"{curve['y'][0]:.2f}")
                 painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
         else:
             y_range = grid_y_max - grid_y_min
@@ -153,17 +163,17 @@ class PlotWidget(QWidget):
             tick = tick_start
             while tick <= tick_end:
                 y_pix = to_pixel_y(tick)
-                painter.drawLine(0, y_pix, w, y_pix)
+                painter.drawLine(margin_left, y_pix, w - margin_right, y_pix)
                 painter.setPen(QPen(Qt.black, 1))
                 painter.setFont(QFont(self.font_family, self.font_size))
-                painter.drawText(w - 40, y_pix + 5, f"{tick:.2f}")
+                painter.drawText(w - margin_right + 5, y_pix + 5, f"{tick:.2f}")
                 painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
                 tick += step_y
 
         # Рисуем горизонтальную ось y = 0.
         zero_y = to_pixel_y(0)
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(0, zero_y, w, zero_y)
+        painter.drawLine(margin_left, zero_y, w - margin_right, zero_y)
 
         # Вертикальная сетка.
         if self.default_points > 1:
@@ -177,26 +187,26 @@ class PlotWidget(QWidget):
         grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else self.small_value
 
         def to_pixel_x(x):
-            return int((x - grid_x_min) / grid_x_range * w)
+            return int(margin_left + (x - grid_x_min) / grid_x_range * plot_width)
 
         # Отрисовка вертикальной сетки от grid_x_min до grid_x_max с шагом step_x.
         painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
         x_val = grid_x_min
         while x_val <= grid_x_max + step_x / 2:
             x_pix = to_pixel_x(x_val)
-            painter.drawLine(x_pix, 0, x_pix, h)
+            painter.drawLine(x_pix, margin_top, x_pix, h - margin_bottom)
             painter.setPen(QPen(Qt.black, 1))
-            painter.drawText(x_pix - 20, h - 5, f"{x_val:.2f}")
+            painter.drawText(x_pix - 20, h - margin_bottom + 20, f"{x_val:.2f}")
             painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
             x_val += step_x
 
         # Рисуем вертикальную ось x = 0 (если она входит в область)
         x_zero = to_pixel_x(0)
-        x_zero = max(0, min(w, x_zero))
+        x_zero = max(margin_left, min(w - margin_right, x_zero))
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(x_zero, 0, x_zero, h)
+        painter.drawLine(x_zero, margin_top, x_zero, h - margin_bottom)
         painter.setPen(QPen(Qt.black, 1))
-        painter.drawText(x_zero - 20, h - 5, "0.00")
+        painter.drawText(x_zero - 20, h - margin_bottom + 20, "0.00")
 
         if not self.data:
             return
@@ -228,6 +238,15 @@ class PlotWidget(QWidget):
         ellipse_height = int(cone_base_width * 0.6)
         shift_y = -int(ellipse_height * self.shift_y_factor)
 
+        # Сначала рисуем сетку в точках, где будут конусы
+        painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        for i in range(num_points):
+            center = self.data[0]["x"][i]
+            center_pix = to_pixel_x(center)
+            # Рисуем вертикальную линию только для первого ряда данных
+            painter.drawLine(center_pix, margin_top, center_pix, h - margin_bottom)
+
+        # Теперь рисуем конусы
         for i in range(num_points):
             center = self.data[0]["x"][i]
             center_pix = to_pixel_x(center)
@@ -252,13 +271,15 @@ class PlotWidget(QWidget):
                     painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
 
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(0, zero_y, w, zero_y)
+        painter.drawLine(margin_left, zero_y, w - margin_right, zero_y)
         self.draw_legend(painter)
 
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width_val, height_val, color):
         """
         Отрисовывает конус с треугольной боковой гранью и эллиптическим основанием.
+        Для конусов, направленных вверх, отрисовывается нижняя часть основания.
         """
+        # Рисуем боковые грани конуса
         path = QPainterPath()
         path.moveTo(apex_x, apex_y)
         path.lineTo(base_x, base_y)
@@ -267,22 +288,48 @@ class PlotWidget(QWidget):
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawPath(path)
+
+        # Рисуем основание конуса (эллипс)
         base_width = width_val
         base_height = int(height_val * 0.5)
         ellipse_rect = (int(base_x), int(base_y - base_height / 2), int(base_width), int(base_height))
-        painter.setBrush(QBrush(color.darker(115)))
-        painter.setPen(QPen(color.darker(150), 2))
-        painter.drawEllipse(*ellipse_rect)
-        highlight_color = color.lighter(160)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(highlight_color))
-        if apex_x < base_x:
-            start_angle = 180 * 16
-            span_angle = -180 * 16
+        
+        # Определяем направление конуса
+        is_upward = apex_y < base_y
+        
+        if is_upward:
+            # Для конусов, направленных вверх, рисуем нижнюю часть основания
+            painter.setBrush(QBrush(color.darker(115)))
+            painter.setPen(QPen(color.darker(150), 2))
+            painter.drawEllipse(*ellipse_rect)
+            
+            # Рисуем видимую часть основания (нижняя половина эллипса)
+            highlight_color = color.lighter(160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(highlight_color))
+            painter.drawArc(*ellipse_rect, 180 * 16, 180 * 16)  # Рисуем нижнюю половину
         else:
-            start_angle = 0
-            span_angle = 180 * 16
-        painter.drawArc(*ellipse_rect, start_angle, span_angle)
+            # Для конусов, направленных вниз, рисуем полное основание
+            # Рисуем невидимую часть основания (нижняя половина эллипса)
+            painter.setBrush(QBrush(color.darker(115)))
+            painter.setPen(QPen(color.darker(150), 2))
+            painter.drawEllipse(*ellipse_rect)
+            
+            # Рисуем видимую часть основания (верхняя половина эллипса)
+            highlight_color = color.lighter(160)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(highlight_color))
+            painter.drawArc(*ellipse_rect, 180 * 16, -180 * 16)
+        
+        # Добавляем блик на боковой грани
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(color.lighter(120)))
+        highlight_path = QPainterPath()
+        highlight_path.moveTo(apex_x, apex_y)
+        highlight_path.lineTo(base_x + width_val * 0.3, base_y)
+        highlight_path.lineTo(base_x + width_val * 0.7, base_y)
+        highlight_path.closeSubpath()
+        painter.drawPath(highlight_path)
 
     def draw_legend(self, painter):
         """
@@ -304,12 +351,20 @@ class PlotWidget(QWidget):
         legend_height = padding * 2 + len(self.data) * (marker_size + spacing) - spacing
         legend_x = 20
         legend_y = 20
+        
+        # Рисуем белый фон легенды
+        painter.setBrush(QBrush(Qt.white))
         painter.setPen(QPen(Qt.black, 1))
         painter.drawRect(legend_x, legend_y, legend_width, legend_height)
+        
         current_y = legend_y + padding
         for curve in self.data:
+            # Рисуем цветной маркер
             painter.setBrush(QBrush(curve["color"]))
+            painter.setPen(QPen(curve["color"].darker(150), 1))
             painter.drawRect(legend_x + padding, current_y, marker_size, marker_size)
+            
+            # Рисуем текст
             painter.setPen(Qt.black)
             painter.drawText(legend_x + padding + marker_size + spacing,
                              current_y + marker_size - 3, curve["label"])
@@ -325,21 +380,31 @@ class MainWindow(QMainWindow):
         self.plot_widget = PlotWidget()
         main_layout.addWidget(self.plot_widget)
         controls_layout = QHBoxLayout()
+        
+        # Настройка спинбокса для начала интервала
         self.start_spin = QDoubleSpinBox()
         self.start_spin.setRange(-1000, 1000)
         self.start_spin.setValue(-10)
+        self.start_spin.setDecimals(2)  # Устанавливаем 2 знака после запятой
+        self.start_spin.setSingleStep(0.1)  # Шаг изменения 0.1
         controls_layout.addWidget(QLabel("Начало интервала:"))
         controls_layout.addWidget(self.start_spin)
+        
+        # Настройка спинбокса для конца интервала
         self.end_spin = QDoubleSpinBox()
         self.end_spin.setRange(-1000, 1000)
         self.end_spin.setValue(10)
+        self.end_spin.setDecimals(2)  # Устанавливаем 2 знака после запятой
+        self.end_spin.setSingleStep(0.1)  # Шаг изменения 0.1
         controls_layout.addWidget(QLabel("Конец интервала:"))
         controls_layout.addWidget(self.end_spin)
+        
         self.points_spin = QSpinBox()
         self.points_spin.setRange(1, 10000)
         self.points_spin.setValue(20)
         controls_layout.addWidget(QLabel("Количество точек:"))
         controls_layout.addWidget(self.points_spin)
+        
         self.func_combo = QComboBox()
         self.func_combo.setView(QListView())
         self.func_combo.setEditable(True)
@@ -363,13 +428,19 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
+        
+        # Настройка таймера обновления
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.update_plot)
-        self.start_spin.valueChanged.connect(self.schedule_update)
-        self.end_spin.valueChanged.connect(self.schedule_update)
+        
+        # Подключаем обработчики событий
+        self.start_spin.valueChanged.connect(self.on_start_changed)
+        self.end_spin.valueChanged.connect(self.on_end_changed)
         self.points_spin.valueChanged.connect(self.schedule_update)
         self.func_model.itemChanged.connect(self.schedule_update)
+        
+        # Запускаем начальное обновление
         self.update_plot()
 
     def schedule_update(self):
@@ -379,8 +450,16 @@ class MainWindow(QMainWindow):
         start = self.start_spin.value()
         end = self.end_spin.value()
         num_points = self.points_spin.value()
+        
+        # Проверяем корректность интервала
+        if start >= end:
+            # Если начало больше или равно концу, очищаем данные и выходим
+            self.plot_widget.setData([])
+            return
+            
         if num_points < 2:
             num_points = 1  # Если выбрана одна точка, размещаем её в центре
+            
         self.plot_widget.user_x_start = start
         self.plot_widget.user_x_end = end
         self.plot_widget.default_points = num_points
@@ -397,6 +476,26 @@ class MainWindow(QMainWindow):
                     "color": FUNCTION_COLORS.get(func_id, QColor(Qt.black))
                 })
         self.plot_widget.setData(data_list)
+
+    def on_start_changed(self, value):
+        """
+        Обработчик изменения значения начала интервала.
+        Обновляет минимальное значение конца интервала.
+        """
+        self.end_spin.setMinimum(value + 0.1)
+        if self.end_spin.value() <= value:
+            self.end_spin.setValue(value + 0.1)
+        self.schedule_update()
+
+    def on_end_changed(self, value):
+        """
+        Обработчик изменения значения конца интервала.
+        Обновляет максимальное значение начала интервала.
+        """
+        self.start_spin.setMaximum(value - 0.1)
+        if self.start_spin.value() >= value:
+            self.start_spin.setValue(value - 0.1)
+        self.schedule_update()
 
 
 if __name__ == "__main__":
