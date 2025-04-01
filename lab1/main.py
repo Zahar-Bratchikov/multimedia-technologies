@@ -1,3 +1,14 @@
+"""
+Основной модуль приложения для визуализации математических функций.
+
+Этот модуль содержит графический интерфейс пользователя для отображения
+математических функций в виде конусов. Приложение позволяет:
+- Выбирать функции для отображения
+- Настраивать диапазон и количество точек
+- Визуализировать данные в виде конусов
+- Отображать легенду и координатную сетку
+"""
+
 import sys
 import math
 import numpy as np
@@ -14,6 +25,19 @@ import functions
 
 
 class Settings:
+    """
+    Класс, содержащий все настройки интерфейса и отображения.
+    
+    Этот класс определяет константы для:
+    - Размеров окна и графика
+    - Отступов и позиционирования элементов
+    - Настроек легенды
+    - Параметров графика
+    - Настроек конусов
+    - Цветов функций
+    - Шрифтов
+    """
+    
     # Настройки интерфейса
     WINDOW_TITLE = "Лабораторная работа №1: Диаграмма функций (PySide)"
     WINDOW_SIZE = (1000, 800)
@@ -59,14 +83,22 @@ class Settings:
 
 
 class FunctionManager:
-    """Класс для управления функциями и их данными."""
+    """
+    Класс для управления функциями и их данными.
+    
+    Этот класс предоставляет методы для:
+    - Получения списка доступных функций
+    - Получения данных функций для заданного интервала
+    - Создания данных для построения графика
+    """
     
     @staticmethod
     def get_available_functions():
         """
         Собирает список доступных функций из модуля functions.
-        Для каждой функции формируется подпись на основе документации.
-        Возвращает список кортежей (подпись, идентификатор функции).
+        
+        Returns:
+            list: Список кортежей (подпись, идентификатор функции).
         """
         func_list = []
         for func_id in range(1, 5):  # Увеличил диапазон до 5 для поддержки дополнительных функций
@@ -82,13 +114,13 @@ class FunctionManager:
         Получает данные функции для заданного интервала.
         
         Args:
-            func_id: Идентификатор функции
-            start: Начало интервала
-            end: Конец интервала
-            num_points: Количество точек
+            func_id (int): Идентификатор функции
+            start (float): Начало интервала
+            end (float): Конец интервала
+            num_points (int): Количество точек
             
         Returns:
-            Кортеж (x, y, label) с массивами данных и меткой функции
+            tuple: Кортеж (x, y, label) с массивами данных и меткой функции
         """
         return functions.get_function_data(func_id, start, end, num_points)
     
@@ -98,13 +130,13 @@ class FunctionManager:
         Создает данные для построения графика.
         
         Args:
-            selected_functions: Список идентификаторов выбранных функций
-            start: Начало интервала
-            end: Конец интервала
-            num_points: Количество точек
+            selected_functions (list): Список идентификаторов выбранных функций
+            start (float): Начало интервала
+            end (float): Конец интервала
+            num_points (int): Количество точек
             
         Returns:
-            Список словарей с данными функций
+            list: Список словарей с данными функций
         """
         data_list = []
         for func_id in selected_functions:
@@ -124,17 +156,40 @@ def get_available_functions():
 
 
 class LegendWidget(QWidget):
+    """
+    Виджет для отображения легенды графика.
+    
+    Этот виджет отображает список функций с их цветовыми маркерами
+    и подписями. Легенда автоматически центрируется и масштабируется
+    под размер виджета.
+    """
+    
     def __init__(self):
+        """
+        Инициализирует виджет легенды.
+        """
         super().__init__()
         self.data = []
         self.setMinimumHeight(50)  # Минимальная высота для легенды
         self.setMaximumHeight(100)  # Максимальная высота для легенды
 
     def setData(self, data_list):
+        """
+        Устанавливает данные для отображения в легенде.
+        
+        Args:
+            data_list (list): Список словарей с данными функций
+        """
         self.data = data_list
         self.update()
 
     def paintEvent(self, event):
+        """
+        Отрисовывает легенду.
+        
+        Args:
+            event: Событие отрисовки
+        """
         if not self.data:
             return
 
@@ -186,7 +241,19 @@ class LegendWidget(QWidget):
 
 
 class PlotData:
+    """
+    Класс для хранения и управления данными графика.
+    
+    Этот класс хранит:
+    - Данные функций
+    - Диапазоны осей
+    - Параметры отображения
+    """
+    
     def __init__(self):
+        """
+        Инициализирует объект данных графика.
+        """
         self.data = []
         self.y_min = -10
         self.y_max = 10
@@ -196,7 +263,12 @@ class PlotData:
         self.extra_margin = 1
 
     def update_data(self, data_list):
-        """Обновляет данные и пересчитывает диапазон оси Y"""
+        """
+        Обновляет данные и пересчитывает диапазон оси Y.
+        
+        Args:
+            data_list (list): Список словарей с данными функций
+        """
         self.data = data_list
         if self.data:
             all_y = np.concatenate([d["y"][~np.isnan(d["y"])] for d in self.data])
@@ -208,7 +280,15 @@ class PlotData:
                 self.y_max = max(computed_y_max, 0)
 
     def get_grid_ranges(self, step_x):
-        """Возвращает диапазоны для сетки"""
+        """
+        Возвращает диапазоны для сетки.
+        
+        Args:
+            step_x (float): Шаг по оси X
+            
+        Returns:
+            tuple: Кортеж с диапазонами для сетки
+        """
         grid_y_min = self.y_min - self.extra_margin
         grid_y_max = self.y_max + self.extra_margin
         grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else Settings.SMALL_VALUE
@@ -221,10 +301,27 @@ class PlotData:
 
 
 class ConeRenderer:
+    """
+    Класс для отрисовки конусов.
+    
+    Этот класс предоставляет методы для отрисовки конусов с
+    треугольной боковой гранью и эллиптическим основанием.
+    """
+    
     @staticmethod
     def draw_cone(painter, apex_x, apex_y, base_x, base_y, width_val, height_val, color):
         """
         Отрисовывает конус с треугольной боковой гранью и эллиптическим основанием.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            apex_x (int): X-координата вершины конуса
+            apex_y (int): Y-координата вершины конуса
+            base_x (int): X-координата основания конуса
+            base_y (int): Y-координата основания конуса
+            width_val (int): Ширина основания конуса
+            height_val (int): Высота конуса
+            color (QColor): Цвет конуса
         """
         # Рисуем основание конуса (эллипс)
         base_width = width_val
@@ -280,9 +377,20 @@ class ConeRenderer:
 
 
 class PlotWidget(QWidget):
-    """Виджет для отображения графика с конусами."""
+    """
+    Виджет для отображения графика с конусами.
+    
+    Этот виджет отвечает за:
+    - Отрисовку координатной сетки
+    - Отображение осей
+    - Отрисовку конусов
+    - Масштабирование и трансформацию координат
+    """
     
     def __init__(self):
+        """
+        Инициализирует виджет графика.
+        """
         super().__init__()
         self.setMinimumSize(*Settings.PLOT_MIN_SIZE)
         self.plot_data = PlotData()
@@ -290,12 +398,22 @@ class PlotWidget(QWidget):
         self.coordinate_transformer = None  # Будет инициализирован в paintEvent
 
     def setData(self, data_list):
-        """Обновляет данные для отображения и перерисовывает график."""
+        """
+        Обновляет данные для отображения и перерисовывает график.
+        
+        Args:
+            data_list (list): Список словарей с данными функций
+        """
         self.plot_data.update_data(data_list)
         self.update()
 
     def paintEvent(self, event):
-        """Основной метод отрисовки виджета."""
+        """
+        Основной метод отрисовки виджета.
+        
+        Args:
+            event: Событие отрисовки
+        """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
@@ -529,22 +647,50 @@ class PlotWidget(QWidget):
 
 
 class CustomComboBox(QComboBox):
+    """
+    Пользовательский комбобокс с улучшенным поведением.
+    
+    Этот класс расширяет стандартный QComboBox для улучшения
+    пользовательского интерфейса при выборе функций.
+    """
+    
     def mouseReleaseEvent(self, event):
+        """
+        Обрабатывает событие отпускания кнопки мыши.
+        
+        Args:
+            event: Событие мыши
+        """
         if self.rect().contains(event.pos()):
             self.showPopup()
         super().mouseReleaseEvent(event)
 
 
 class ControlPanel(QWidget):
-    """Панель управления с элементами ввода для настройки графика."""
+    """
+    Панель управления с элементами ввода для настройки графика.
+    
+    Этот виджет содержит:
+    - Спинбоксы для настройки диапазона и количества точек
+    - Комбобокс для выбора функций
+    - Обработчики изменения параметров
+    """
     
     def __init__(self, parent=None):
+        """
+        Инициализирует панель управления.
+        
+        Args:
+            parent: Родительский виджет
+        """
         super().__init__(parent)
         self.setup_ui()
         self.setup_connections()
         
     def setup_ui(self):
-        """Создание и настройка элементов интерфейса."""
+        """
+        Создание и настройка элементов интерфейса.
+        """
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         
@@ -632,7 +778,19 @@ class ControlPanel(QWidget):
 
 
 class MainWindow(QMainWindow):
+    """
+    Главное окно приложения.
+    
+    Этот класс управляет:
+    - Созданием и компоновкой виджетов
+    - Обновлением графика
+    - Обработкой пользовательского ввода
+    """
+    
     def __init__(self):
+        """
+        Инициализирует главное окно приложения.
+        """
         super().__init__()
         self.setWindowTitle(Settings.WINDOW_TITLE)
         self.resize(*Settings.WINDOW_SIZE)
