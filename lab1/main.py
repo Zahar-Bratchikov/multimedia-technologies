@@ -12,7 +12,33 @@ from PySide6.QtGui import (
 )
 import functions
 
-# Определяем цвета для функций.
+# Константы для настройки интерфейса
+WINDOW_TITLE = "Лабораторная работа №1: Диаграмма функций (PySide)"
+WINDOW_SIZE = (1000, 800)
+PLOT_MIN_SIZE = (800, 600)
+MARGIN_LEFT = 60
+MARGIN_RIGHT = 40
+MARGIN_BOTTOM = 40
+MARGIN_TOP = 20
+LEGEND_PADDING = 10
+LEGEND_MARKER_SIZE = 15
+LEGEND_SPACING = 8
+LEGEND_POSITION = (20, 20)
+
+# Константы для настройки графика
+DEFAULT_X_RANGE = (-10, 10)
+DEFAULT_POINTS = 20
+DEFAULT_SPIN_RANGE = (-1000, 1000)
+DEFAULT_POINTS_RANGE = (1, 10000)
+SMALL_VALUE = 1e-6
+
+# Константы для настройки конусов
+CONE_SCALE = 0.7
+CONE_BASE_RATIO = 2 / 3
+SHIFT_Y_FACTOR = 2.5
+FIXED_BASE_WIDTH = 40  # Для случая с 3 точками
+
+# Определяем цвета для функций
 FUNCTION_COLORS = {
     1: QColor(Qt.blue),
     2: QColor(Qt.green),
@@ -20,6 +46,10 @@ FUNCTION_COLORS = {
     4: QColor(Qt.magenta)
 }
 
+# Настройки шрифтов
+FONT_FAMILY = "Arial"
+FONT_SIZE = 8
+LEGEND_FONT_SIZE = 10
 
 def get_available_functions():
     """
@@ -39,30 +69,17 @@ def get_available_functions():
 class PlotWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(800, 600)
-        # Данные для построения: список словарей с ключами "x", "y", "label", "color"
+        self.setMinimumSize(*PLOT_MIN_SIZE)
+        
+        # Инициализация данных
         self.data = []
-        # Диапазон по оси Y (будет пересчитан на основе данных)
         self.y_min = -10
         self.y_max = 10
-        # Интервал по оси X, задаваемый пользователем.
-        self.user_x_start = -10
-        self.user_x_end = 10
-        # Количество точек (если данных нет, используется значение по умолчанию)
-        self.default_points = 20
-
-        # Конфигурационные параметры
-        self.extra_margin = 1  # Дополнительный отступ для горизонтальной сетки (для оси Y)
-        self.cone_scale = 0.7  # Масштаб по оси X для конусов
-        self.shift_y_factor = 2.5  # Вертикальный сдвиг (используется с отрицательным знаком)
-        self.font_family = "Arial"  # Название шрифта для подписей
-        self.font_size = 8  # Размер шрифта для подписей осей
-        self.legend_font_size = 10  # Размер шрифта для легенды
-        self.small_value = 1e-6  # Малое значение для предотвращения деления на ноль
-        # Фиксированный размер ячейки (если задан), иначе используется динамический расчёт
+        self.user_x_start = DEFAULT_X_RANGE[0]
+        self.user_x_end = DEFAULT_X_RANGE[1]
+        self.default_points = DEFAULT_POINTS
+        self.extra_margin = 1
         self.fixed_base_width = None
-        # Отношение ширины основания конуса к ширине ячейки (примерно 2/3)
-        self.cone_base_ratio = 2 / 3
 
     def setData(self, data_list):
         """
@@ -71,7 +88,7 @@ class PlotWidget(QWidget):
         """
         self.data = data_list
         if self.data:
-            # Объединяем все валидные значения Y.
+            # Объединяем все валидные значения Y
             all_y = np.concatenate([d["y"][~np.isnan(d["y"])] for d in self.data])
             if len(all_y) > 0:
                 margin_y = (all_y.max() - all_y.min()) * 0.1
@@ -84,169 +101,145 @@ class PlotWidget(QWidget):
     def paintEvent(self, event):
         """
         Отрисовывает диаграмму функций в виде конусов.
-        1. Рисует фон и горизонтальную сетку с автоматически вычисляемым шагом по оси Y.
-           Если выбрана одна точка, линии привязываются к вершинам конусов.
-        2. Рисует вертикальную сетку, где все ячейки имеют одинаковую ширину.
-           Для этого вычисляется домен по оси X с дополнительной ячейкой слева и справа.
-        3. Отрисовывает конусы, где основание конуса имеет ширину ≈ 2/3 ширины ячейки.
-        4. Рисует легенду.
         """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
-        # Определяем отступы для осей и подписей
-        margin_left = 60  # Отступ слева для подписей оси Y
-        margin_right = 40  # Отступ справа для подписей оси Y
-        margin_bottom = 40  # Отступ снизу для подписей оси X
-        margin_top = 20  # Отступ сверху
-
         # Вычисляем рабочую область для графика
-        plot_width = w - margin_left - margin_right
-        plot_height = h - margin_top - margin_bottom
+        plot_width = w - MARGIN_LEFT - MARGIN_RIGHT
+        plot_height = h - MARGIN_TOP - MARGIN_BOTTOM
 
         # Ось Y строится с дополнительным отступом
         grid_y_min = self.y_min - self.extra_margin
         grid_y_max = self.y_max + self.extra_margin
-        grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else self.small_value
+        grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else SMALL_VALUE
 
         def to_pixel_y(y):
-            return int(h - margin_bottom - (y - grid_y_min) / grid_y_range * plot_height)
+            return int(h - MARGIN_BOTTOM - (y - grid_y_min) / grid_y_range * plot_height)
 
-        # Функция для вычисления "приятного" шага для оси Y.
-        def niceNum(x, round_val):
-            if x == 0:
-                return 0
-            exp = math.floor(math.log10(x))
-            f = x / (10 ** exp)
-            if round_val:
-                if f < 1.5:
-                    nf = 1
-                elif f < 3:
-                    nf = 2
-                elif f < 7:
-                    nf = 5
-                else:
-                    nf = 10
-            else:
-                if f <= 1:
-                    nf = 1
-                elif f <= 2:
-                    nf = 2
-                elif f <= 5:
-                    nf = 5
-                else:
-                    nf = 10
-            return nf * (10 ** exp)
+        def to_pixel_x(x):
+            return int(MARGIN_LEFT + (x - grid_x_min) / grid_x_range * plot_width)
 
-        # Рисуем фон.
+        # Рисуем фон
         painter.fillRect(self.rect(), QBrush(Qt.white))
 
-        # Отрисовка горизонтальной сетки.
+        # Отрисовка горизонтальной сетки
         if self.data and len(self.data[0]["x"]) == 1:
-            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-            for func_index, curve in enumerate(self.data):
-                base_y = to_pixel_y(0)
-                shift_y = to_pixel_y(curve["y"][0]) - base_y
-                y_pos = to_pixel_y(curve["y"][0]) + int(func_index * shift_y)
-                painter.drawLine(margin_left, y_pos, w - margin_right, y_pos)
-                painter.setPen(QPen(Qt.black, 1))
-                painter.drawText(w - margin_right + 5, y_pos + 5, f"{curve['y'][0]:.2f}")
-                painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+            self._draw_single_point_grid(painter, w, h, to_pixel_y)
         else:
-            y_range = grid_y_max - grid_y_min
-            target_lines = 5
-            step_y = niceNum(y_range / target_lines, True)
-            tick_start = math.floor(grid_y_min / step_y) * step_y
-            tick_end = math.ceil(grid_y_max / step_y) * step_y
-            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-            tick = tick_start
-            while tick <= tick_end:
-                y_pix = to_pixel_y(tick)
-                painter.drawLine(margin_left, y_pix, w - margin_right, y_pix)
-                painter.setPen(QPen(Qt.black, 1))
-                painter.setFont(QFont(self.font_family, self.font_size))
-                painter.drawText(w - margin_right + 5, y_pix + 5, f"{tick:.2f}")
-                painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-                tick += step_y
+            self._draw_horizontal_grid(painter, w, h, to_pixel_y)
 
-        # Рисуем горизонтальную ось y = 0.
+        # Рисуем горизонтальную ось y = 0
         zero_y = to_pixel_y(0)
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(margin_left, zero_y, w - margin_right, zero_y)
+        painter.drawLine(MARGIN_LEFT, zero_y, w - MARGIN_RIGHT, zero_y)
 
-        # Вертикальная сетка.
+        # Вертикальная сетка
         if self.default_points > 1:
             step_x = (self.user_x_end - self.user_x_start) / (self.default_points - 1)
         else:
             step_x = (self.user_x_end - self.user_x_start) if (self.user_x_end != self.user_x_start) else 1
 
-        # Определяем домен для вертикальной сетки с дополнительной ячейкой слева и справа.
+        # Определяем домен для вертикальной сетки
         grid_x_min = self.user_x_start - step_x
         grid_x_max = self.user_x_end + step_x
-        grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else self.small_value
+        grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else SMALL_VALUE
 
-        def to_pixel_x(x):
-            return int(margin_left + (x - grid_x_min) / grid_x_range * plot_width)
+        # Отрисовка вертикальной сетки
+        self._draw_vertical_grid(painter, h, grid_x_min, grid_x_max, step_x, to_pixel_x)
 
-        # Отрисовка вертикальной сетки от grid_x_min до grid_x_max с шагом step_x.
-        painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
-        x_val = grid_x_min
-        while x_val <= grid_x_max + step_x / 2:
-            x_pix = to_pixel_x(x_val)
-            painter.drawLine(x_pix, margin_top, x_pix, h - margin_bottom)
-            painter.setPen(QPen(Qt.black, 1))
-            painter.drawText(x_pix - 20, h - margin_bottom + 20, f"{x_val:.2f}")
-            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
-            x_val += step_x
-
-        # Рисуем вертикальную ось x = 0 (если она входит в область)
+        # Рисуем вертикальную ось x = 0
         x_zero = to_pixel_x(0)
-        x_zero = max(margin_left, min(w - margin_right, x_zero))
+        x_zero = max(MARGIN_LEFT, min(w - MARGIN_RIGHT, x_zero))
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(x_zero, margin_top, x_zero, h - margin_bottom)
+        painter.drawLine(x_zero, MARGIN_TOP, x_zero, h - MARGIN_BOTTOM)
         painter.setPen(QPen(Qt.black, 1))
-        painter.drawText(x_zero - 20, h - margin_bottom + 20, "0.00")
+        painter.drawText(x_zero - 20, h - MARGIN_BOTTOM + 20, "0.00")
 
         if not self.data:
             return
 
-        # Отрисовка конусов.
+        # Отрисовка конусов
+        self._draw_cones(painter, w, h, to_pixel_x, to_pixel_y, grid_x_min, grid_x_range, step_x)
+
+        # Рисуем горизонтальную ось y = 0
+        painter.setPen(QPen(Qt.black, 2))
+        painter.drawLine(MARGIN_LEFT, zero_y, w - MARGIN_RIGHT, zero_y)
+        
+        # Рисуем легенду
+        self._draw_legend(painter)
+
+    def _draw_single_point_grid(self, painter, w, h, to_pixel_y):
+        """Отрисовка сетки для случая с одной точкой"""
+        painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        for func_index, curve in enumerate(self.data):
+            base_y = to_pixel_y(0)
+            shift_y = to_pixel_y(curve["y"][0]) - base_y
+            y_pos = to_pixel_y(curve["y"][0]) + int(func_index * shift_y)
+            painter.drawLine(MARGIN_LEFT, y_pos, w - MARGIN_RIGHT, y_pos)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(w - MARGIN_RIGHT + 5, y_pos + 5, f"{curve['y'][0]:.2f}")
+            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+
+    def _draw_horizontal_grid(self, painter, w, h, to_pixel_y):
+        """Отрисовка горизонтальной сетки"""
+        y_range = self.y_max + self.extra_margin - (self.y_min - self.extra_margin)
+        target_lines = 5
+        step_y = self._nice_num(y_range / target_lines, True)
+        tick_start = math.floor((self.y_min - self.extra_margin) / step_y) * step_y
+        tick_end = math.ceil((self.y_max + self.extra_margin) / step_y) * step_y
+        painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        tick = tick_start
+        while tick <= tick_end:
+            y_pix = to_pixel_y(tick)
+            painter.drawLine(MARGIN_LEFT, y_pix, w - MARGIN_RIGHT, y_pix)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.setFont(QFont(FONT_FAMILY, FONT_SIZE))
+            painter.drawText(w - MARGIN_RIGHT + 5, y_pix + 5, f"{tick:.2f}")
+            painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+            tick += step_y
+
+    def _draw_vertical_grid(self, painter, h, grid_x_min, grid_x_max, step_x, to_pixel_x):
+        """Отрисовка вертикальной сетки"""
+        painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+        x_val = grid_x_min
+        while x_val <= grid_x_max + step_x / 2:
+            x_pix = to_pixel_x(x_val)
+            painter.drawLine(x_pix, MARGIN_TOP, x_pix, h - MARGIN_BOTTOM)
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(x_pix - 20, h - MARGIN_BOTTOM + 20, f"{x_val:.2f}")
+            painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+            x_val += step_x
+
+    def _draw_cones(self, painter, w, h, to_pixel_x, to_pixel_y, grid_x_min, grid_x_range, step_x):
+        """Отрисовка конусов"""
         num_points = len(self.data[0]["x"])
         num_funcs = len(self.data)
-        # Используем основное множество точек (домен: [user_x_start, user_x_end])
-        # Вычисляем ширину области построения по оси X (без дополнительных ячеек)
-        plot_x_range = self.user_x_end - self.user_x_start
-        # Вычисляем group_width как долю области построения, масштабированную на конусную область
+        
+        # Вычисляем размеры для конусов
         left_bound_plot = to_pixel_x(self.user_x_start + step_x)
         right_bound_plot = to_pixel_x(self.user_x_end - step_x)
-        group_width = (right_bound_plot - left_bound_plot) * self.cone_scale / (num_points if num_points else 1)
+        group_width = (right_bound_plot - left_bound_plot) * CONE_SCALE / (num_points if num_points else 1)
 
-        # Если точек всего 3, устанавливаем фиксированное значение
-        # чтобы конусы не сливались в линии.
+        # Определяем ширину ячейки
         if num_points == 3:
-            self.fixed_base_width = 40
-        else:
-            self.fixed_base_width = None
-
-        if self.fixed_base_width is not None:
-            cell_width = self.fixed_base_width
+            cell_width = FIXED_BASE_WIDTH
         else:
             cell_width = group_width / num_funcs if num_funcs else group_width
 
-        cone_base_width = cell_width * self.cone_base_ratio
+        cone_base_width = cell_width * CONE_BASE_RATIO
         ellipse_height = int(cone_base_width * 0.6)
-        shift_y = -int(ellipse_height * self.shift_y_factor)
+        shift_y = -int(ellipse_height * SHIFT_Y_FACTOR)
 
-        # Сначала рисуем сетку в точках, где будут конусы
+        # Рисуем сетку для конусов
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
         for i in range(num_points):
             center = self.data[0]["x"][i]
             center_pix = to_pixel_x(center)
-            # Рисуем вертикальную линию только для первого ряда данных
-            painter.drawLine(center_pix, margin_top, center_pix, h - margin_bottom)
+            painter.drawLine(center_pix, MARGIN_TOP, center_pix, h - MARGIN_BOTTOM)
 
-        # Теперь рисуем конусы
+        # Рисуем конусы
         for i in range(num_points):
             center = self.data[0]["x"][i]
             center_pix = to_pixel_x(center)
@@ -258,8 +251,15 @@ class PlotWidget(QWidget):
                 x_offset = int((func_index - (num_funcs - 1) / 2) * cell_width)
                 apex_x = center_pix + x_offset
                 base_x = apex_x - int(cone_base_width / 2)
-                apex_y = to_pixel_y(curve["y"][i]) + func_index * shift_y
-                base_y = to_pixel_y(0) + func_index * shift_y
+                
+                # Для первого ряда данных (func_index == 0) основание всегда на оси X
+                if func_index == 0:
+                    base_y = to_pixel_y(0)
+                    apex_y = to_pixel_y(curve["y"][i])
+                else:
+                    apex_y = to_pixel_y(curve["y"][i]) + func_index * shift_y
+                    base_y = to_pixel_y(0) + func_index * shift_y
+                
                 base_centers.append((base_x + int(cone_base_width / 2), base_y))
                 self.draw_cone(painter, apex_x, apex_y, base_x, base_y, int(cone_base_width), ellipse_height,
                                curve["color"])
@@ -270,9 +270,63 @@ class PlotWidget(QWidget):
                     p2 = base_centers[j + 1]
                     painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
 
-        painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(margin_left, zero_y, w - margin_right, zero_y)
-        self.draw_legend(painter)
+    def _draw_legend(self, painter):
+        """Отрисовка легенды"""
+        font = QFont(FONT_FAMILY, LEGEND_FONT_SIZE)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        
+        # Вычисляем размеры легенды
+        max_label_width = max(metrics.horizontalAdvance(curve["label"]) for curve in self.data)
+        legend_width = LEGEND_PADDING * 2 + LEGEND_MARKER_SIZE + LEGEND_SPACING + max_label_width
+        legend_height = LEGEND_PADDING * 2 + len(self.data) * (LEGEND_MARKER_SIZE + LEGEND_SPACING) - LEGEND_SPACING
+        
+        # Рисуем фон легенды
+        painter.setBrush(QBrush(Qt.white))
+        painter.setPen(QPen(Qt.black, 1))
+        painter.drawRect(*LEGEND_POSITION, legend_width, legend_height)
+        
+        # Рисуем маркеры и подписи
+        current_y = LEGEND_POSITION[1] + LEGEND_PADDING
+        for curve in self.data:
+            # Рисуем цветной маркер
+            painter.setBrush(QBrush(curve["color"]))
+            painter.setPen(QPen(curve["color"].darker(150), 1))
+            painter.drawRect(LEGEND_POSITION[0] + LEGEND_PADDING, current_y, 
+                           LEGEND_MARKER_SIZE, LEGEND_MARKER_SIZE)
+            
+            # Рисуем текст
+            painter.setPen(Qt.black)
+            painter.drawText(LEGEND_POSITION[0] + LEGEND_PADDING + LEGEND_MARKER_SIZE + LEGEND_SPACING,
+                           current_y + LEGEND_MARKER_SIZE - 3, curve["label"])
+            current_y += LEGEND_MARKER_SIZE + LEGEND_SPACING
+
+    @staticmethod
+    def _nice_num(x, round_val):
+        """Вычисляет "приятное" число для шага сетки"""
+        if x == 0:
+            return 0
+        exp = math.floor(math.log10(x))
+        f = x / (10 ** exp)
+        if round_val:
+            if f < 1.5:
+                nf = 1
+            elif f < 3:
+                nf = 2
+            elif f < 7:
+                nf = 5
+            else:
+                nf = 10
+        else:
+            if f <= 1:
+                nf = 1
+            elif f <= 2:
+                nf = 2
+            elif f <= 5:
+                nf = 5
+            else:
+                nf = 10
+        return nf * (10 ** exp)
 
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width_val, height_val, color):
         """
@@ -330,45 +384,6 @@ class PlotWidget(QWidget):
         highlight_path.lineTo(base_x + width_val * 0.7, base_y)
         highlight_path.closeSubpath()
         painter.drawPath(highlight_path)
-
-    def draw_legend(self, painter):
-        """
-        Рисует легенду с подписями функций. Ширина легенды рассчитывается на основе максимальной ширины подписи.
-        """
-        font = QFont(self.font_family, self.legend_font_size)
-        painter.setFont(font)
-        metrics = QFontMetrics(font)
-        padding = 10
-        marker_size = 15
-        spacing = 8
-        max_label_width = 0
-        for curve in self.data:
-            text = curve["label"]
-            width_text = metrics.horizontalAdvance(text)
-            if width_text > max_label_width:
-                max_label_width = width_text
-        legend_width = padding * 2 + marker_size + spacing + max_label_width
-        legend_height = padding * 2 + len(self.data) * (marker_size + spacing) - spacing
-        legend_x = 20
-        legend_y = 20
-        
-        # Рисуем белый фон легенды
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1))
-        painter.drawRect(legend_x, legend_y, legend_width, legend_height)
-        
-        current_y = legend_y + padding
-        for curve in self.data:
-            # Рисуем цветной маркер
-            painter.setBrush(QBrush(curve["color"]))
-            painter.setPen(QPen(curve["color"].darker(150), 1))
-            painter.drawRect(legend_x + padding, current_y, marker_size, marker_size)
-            
-            # Рисуем текст
-            painter.setPen(Qt.black)
-            painter.drawText(legend_x + padding + marker_size + spacing,
-                             current_y + marker_size - 3, curve["label"])
-            current_y += marker_size + spacing
 
 
 class MainWindow(QMainWindow):
