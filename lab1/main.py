@@ -222,15 +222,16 @@ class PlotWidget(QWidget):
         right_bound_plot = to_pixel_x(self.user_x_end - step_x)
         group_width = (right_bound_plot - left_bound_plot) * CONE_SCALE / (num_points if num_points else 1)
 
-        # Определяем ширину ячейки
-        if num_points == 3:
-            cell_width = FIXED_BASE_WIDTH
-        else:
-            cell_width = group_width / num_funcs if num_funcs else group_width
+        # Определяем ширину ячейки и смещения
+        # Используем фиксированную ширину для всех случаев
+        cell_width = FIXED_BASE_WIDTH if num_points <= 3 else group_width / (num_funcs + 1)
 
         cone_base_width = cell_width * CONE_BASE_RATIO
         ellipse_height = int(cone_base_width * 0.6)
-        shift_y = -int(ellipse_height * SHIFT_Y_FACTOR)
+        
+        # Настраиваем смещения для конусов (вправо-вверх)
+        horizontal_shift = cell_width * 1.2  # Увеличиваем смещение вправо
+        vertical_shift = ellipse_height * 0.8  # Увеличиваем смещение вверх
 
         # Рисуем сетку для конусов
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
@@ -244,25 +245,29 @@ class PlotWidget(QWidget):
             center = self.data[0]["x"][i]
             center_pix = to_pixel_x(center)
             base_centers = []
+            
             for func_index, curve in enumerate(self.data):
                 y_val = curve["y"][i]
                 if np.isnan(y_val):
                     continue
-                x_offset = int((func_index - (num_funcs - 1) / 2) * cell_width)
-                apex_x = center_pix + x_offset
+                
+                # Вычисляем позицию конуса с учетом смещений (вправо-вверх)
+                x_offset = int(func_index * horizontal_shift)  # Смещение вправо
+                y_offset = int(func_index * vertical_shift)  # Смещение вверх
+                
+                # Позиция вершины и основания конуса
+                apex_x = center_pix + x_offset  # Всегда смещаем вправо
                 base_x = apex_x - int(cone_base_width / 2)
                 
-                # Для первого ряда данных (func_index == 0) основание всегда на оси X
-                if func_index == 0:
-                    base_y = to_pixel_y(0)
-                    apex_y = to_pixel_y(curve["y"][i])
-                else:
-                    apex_y = to_pixel_y(curve["y"][i]) + func_index * shift_y
-                    base_y = to_pixel_y(0) + func_index * shift_y
+                # Вычисляем y-координаты с учетом смещения вверх (отрицательное смещение для движения вверх)
+                base_y = to_pixel_y(0) - y_offset  # Всегда смещаем вверх
+                apex_y = to_pixel_y(curve["y"][i]) - y_offset  # Всегда смещаем вверх
                 
                 base_centers.append((base_x + int(cone_base_width / 2), base_y))
                 self.draw_cone(painter, apex_x, apex_y, base_x, base_y, int(cone_base_width), ellipse_height,
-                               curve["color"])
+                             curve["color"])
+            
+            # Рисуем соединительные линии между основаниями конусов
             if len(base_centers) > 1:
                 painter.setPen(QPen(Qt.black, 1))
                 for j in range(len(base_centers) - 1):
@@ -331,18 +336,7 @@ class PlotWidget(QWidget):
     def draw_cone(self, painter, apex_x, apex_y, base_x, base_y, width_val, height_val, color):
         """
         Отрисовывает конус с треугольной боковой гранью и эллиптическим основанием.
-        Для конусов, направленных вверх, отрисовывается нижняя часть основания.
         """
-        # Рисуем боковые грани конуса
-        path = QPainterPath()
-        path.moveTo(apex_x, apex_y)
-        path.lineTo(base_x, base_y)
-        path.lineTo(base_x + width_val, base_y)
-        path.closeSubpath()
-        painter.setBrush(QBrush(color))
-        painter.setPen(QPen(color.darker(150), 2))
-        painter.drawPath(path)
-
         # Рисуем основание конуса (эллипс)
         base_width = width_val
         base_height = int(height_val * 0.5)
@@ -351,25 +345,35 @@ class PlotWidget(QWidget):
         # Определяем направление конуса
         is_upward = apex_y < base_y
         
+        # Сначала рисуем основание
         if is_upward:
-            # Для конусов, направленных вверх, рисуем нижнюю часть основания
+            # Для конусов, направленных вверх
             painter.setBrush(QBrush(color.darker(115)))
             painter.setPen(QPen(color.darker(150), 2))
             painter.drawEllipse(*ellipse_rect)
-            
-            # Рисуем видимую часть основания (нижняя половина эллипса)
+        
+        # Затем рисуем боковую грань
+        path = QPainterPath()
+        path.moveTo(apex_x, apex_y)
+        path.lineTo(base_x, base_y)
+        path.lineTo(base_x + width_val, base_y)
+        path.closeSubpath()
+        painter.setBrush(QBrush(color))
+        painter.setPen(QPen(color.darker(150), 2))
+        painter.drawPath(path)
+        
+        # Рисуем видимую часть основания поверх боковой грани
+        if is_upward:
+            # Для конусов, направленных вверх, рисуем нижнюю часть
             highlight_color = color.lighter(160)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(highlight_color))
-            painter.drawArc(*ellipse_rect, 180 * 16, 180 * 16)  # Рисуем нижнюю половину
+            painter.drawArc(*ellipse_rect, 180 * 16, 180 * 16)
         else:
-            # Для конусов, направленных вниз, рисуем полное основание
-            # Рисуем невидимую часть основания (нижняя половина эллипса)
+            # Для конусов, направленных вниз
             painter.setBrush(QBrush(color.darker(115)))
             painter.setPen(QPen(color.darker(150), 2))
             painter.drawEllipse(*ellipse_rect)
-            
-            # Рисуем видимую часть основания (верхняя половина эллипса)
             highlight_color = color.lighter(160)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(highlight_color))
