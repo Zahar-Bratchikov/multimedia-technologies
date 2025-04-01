@@ -36,7 +36,7 @@ SMALL_VALUE = 1e-6
 CONE_SCALE = 0.7
 CONE_BASE_RATIO = 2 / 3
 SHIFT_Y_FACTOR = 2.5
-FIXED_BASE_WIDTH = 40  # Для случая с 3 точками
+FIXED_BASE_WIDTH = 40
 
 # Определяем цвета для функций
 FUNCTION_COLORS = {
@@ -64,6 +64,68 @@ def get_available_functions():
             doc = func.__doc__.strip() if func.__doc__ else "Нет описания"
             func_list.append((f"Функция {func_id} ({doc})", func_id))
     return func_list
+
+
+class LegendWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.data = []
+        self.setMinimumHeight(50)  # Минимальная высота для легенды
+        self.setMaximumHeight(100)  # Максимальная высота для легенды
+
+    def setData(self, data_list):
+        self.data = data_list
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.data:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Настройка шрифта
+        font = QFont(FONT_FAMILY, LEGEND_FONT_SIZE)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        
+        # Рисуем белый фон
+        painter.fillRect(self.rect(), QBrush(Qt.white))
+        
+        # Вычисляем размеры элементов легенды
+        item_spacing = 20  # Расстояние между элементами
+        marker_size = 15
+        text_spacing = 5
+        
+        # Вычисляем общую ширину всех элементов
+        total_width = 0
+        for curve in self.data:
+            text_width = metrics.horizontalAdvance(curve["label"])
+            item_width = marker_size + text_spacing + text_width
+            total_width += item_width + item_spacing
+
+        # Начальная позиция (центрируем легенду)
+        start_x = (self.width() - total_width + item_spacing) / 2
+        center_y = self.height() / 2
+        
+        # Рисуем элементы легенды
+        current_x = start_x
+        for curve in self.data:
+            # Рисуем цветной маркер
+            painter.setBrush(QBrush(curve["color"]))
+            painter.setPen(QPen(curve["color"].darker(150), 1))
+            painter.drawRect(int(current_x), int(center_y - marker_size/2), 
+                           marker_size, marker_size)
+            
+            # Рисуем текст
+            painter.setPen(Qt.black)
+            text_x = current_x + marker_size + text_spacing
+            text_y = center_y + metrics.height()/2 - 2
+            painter.drawText(int(text_x), int(text_y), curve["label"])
+            
+            # Обновляем позицию для следующего элемента
+            text_width = metrics.horizontalAdvance(curve["label"])
+            current_x += marker_size + text_spacing + text_width + item_spacing
 
 
 class PlotWidget(QWidget):
@@ -106,6 +168,11 @@ class PlotWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
+        # Рисуем фон с черной границей
+        painter.fillRect(self.rect(), QBrush(Qt.white))
+        painter.setPen(QPen(Qt.black, 2))
+        painter.drawRect(0, 0, w-1, h-1)
+
         # Вычисляем рабочую область для графика
         plot_width = w - MARGIN_LEFT - MARGIN_RIGHT
         plot_height = h - MARGIN_TOP - MARGIN_BOTTOM
@@ -121,20 +188,6 @@ class PlotWidget(QWidget):
         def to_pixel_x(x):
             return int(MARGIN_LEFT + (x - grid_x_min) / grid_x_range * plot_width)
 
-        # Рисуем фон
-        painter.fillRect(self.rect(), QBrush(Qt.white))
-
-        # Отрисовка горизонтальной сетки
-        if self.data and len(self.data[0]["x"]) == 1:
-            self._draw_single_point_grid(painter, w, h, to_pixel_y)
-        else:
-            self._draw_horizontal_grid(painter, w, h, to_pixel_y)
-
-        # Рисуем горизонтальную ось y = 0
-        zero_y = to_pixel_y(0)
-        painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(MARGIN_LEFT, zero_y, w - MARGIN_RIGHT, zero_y)
-
         # Вертикальная сетка
         if self.default_points > 1:
             step_x = (self.user_x_end - self.user_x_start) / (self.default_points - 1)
@@ -146,29 +199,36 @@ class PlotWidget(QWidget):
         grid_x_max = self.user_x_end + step_x
         grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else SMALL_VALUE
 
+        # 1. Рисуем сетку
+        # Отрисовка горизонтальной сетки
+        if self.data and len(self.data[0]["x"]) == 1:
+            self._draw_single_point_grid(painter, w, h, to_pixel_y)
+        else:
+            self._draw_horizontal_grid(painter, w, h, to_pixel_y)
+
         # Отрисовка вертикальной сетки
         self._draw_vertical_grid(painter, h, grid_x_min, grid_x_max, step_x, to_pixel_x)
 
-        # Рисуем вертикальную ось x = 0
-        x_zero = to_pixel_x(0)
-        x_zero = max(MARGIN_LEFT, min(w - MARGIN_RIGHT, x_zero))
+        # 2. Рисуем оси
+        # Горизонтальная ось y = 0
+        zero_y = to_pixel_y(0)
         painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(x_zero, MARGIN_TOP, x_zero, h - MARGIN_BOTTOM)
-        painter.setPen(QPen(Qt.black, 1))
-        painter.drawText(x_zero - 20, h - MARGIN_BOTTOM + 20, "0.00")
+        painter.drawLine(MARGIN_LEFT, zero_y, w - MARGIN_RIGHT, zero_y)
+
+        # Вертикальная ось x = 0 (только если она в пределах области графика)
+        x_zero = to_pixel_x(0)
+        if self.user_x_start <= 0 <= self.user_x_end:
+            x_zero = max(MARGIN_LEFT, min(w - MARGIN_RIGHT, x_zero))
+            painter.drawLine(x_zero, MARGIN_TOP, x_zero, h - MARGIN_BOTTOM)
+            # Подписи к осям
+            painter.setPen(QPen(Qt.black, 1))
+            painter.drawText(x_zero - 20, h - MARGIN_BOTTOM + 20, "0.00")
 
         if not self.data:
             return
 
-        # Отрисовка конусов
+        # 3. Рисуем конусы поверх всего
         self._draw_cones(painter, w, h, to_pixel_x, to_pixel_y, grid_x_min, grid_x_range, step_x)
-
-        # Рисуем горизонтальную ось y = 0
-        painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(MARGIN_LEFT, zero_y, w - MARGIN_RIGHT, zero_y)
-        
-        # Рисуем легенду
-        self._draw_legend(painter)
 
     def _draw_single_point_grid(self, painter, w, h, to_pixel_y):
         """Отрисовка сетки для случая с одной точкой"""
@@ -275,37 +335,6 @@ class PlotWidget(QWidget):
                     p2 = base_centers[j + 1]
                     painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
 
-    def _draw_legend(self, painter):
-        """Отрисовка легенды"""
-        font = QFont(FONT_FAMILY, LEGEND_FONT_SIZE)
-        painter.setFont(font)
-        metrics = QFontMetrics(font)
-        
-        # Вычисляем размеры легенды
-        max_label_width = max(metrics.horizontalAdvance(curve["label"]) for curve in self.data)
-        legend_width = LEGEND_PADDING * 2 + LEGEND_MARKER_SIZE + LEGEND_SPACING + max_label_width
-        legend_height = LEGEND_PADDING * 2 + len(self.data) * (LEGEND_MARKER_SIZE + LEGEND_SPACING) - LEGEND_SPACING
-        
-        # Рисуем фон легенды
-        painter.setBrush(QBrush(Qt.white))
-        painter.setPen(QPen(Qt.black, 1))
-        painter.drawRect(*LEGEND_POSITION, legend_width, legend_height)
-        
-        # Рисуем маркеры и подписи
-        current_y = LEGEND_POSITION[1] + LEGEND_PADDING
-        for curve in self.data:
-            # Рисуем цветной маркер
-            painter.setBrush(QBrush(curve["color"]))
-            painter.setPen(QPen(curve["color"].darker(150), 1))
-            painter.drawRect(LEGEND_POSITION[0] + LEGEND_PADDING, current_y, 
-                           LEGEND_MARKER_SIZE, LEGEND_MARKER_SIZE)
-            
-            # Рисуем текст
-            painter.setPen(Qt.black)
-            painter.drawText(LEGEND_POSITION[0] + LEGEND_PADDING + LEGEND_MARKER_SIZE + LEGEND_SPACING,
-                           current_y + LEGEND_MARKER_SIZE - 3, curve["label"])
-            current_y += LEGEND_MARKER_SIZE + LEGEND_SPACING
-
     @staticmethod
     def _nice_num(x, round_val):
         """Вычисляет "приятное" число для шага сетки"""
@@ -390,14 +419,33 @@ class PlotWidget(QWidget):
         painter.drawPath(highlight_path)
 
 
+class CustomComboBox(QComboBox):
+    def mouseReleaseEvent(self, event):
+        if self.rect().contains(event.pos()):
+            self.showPopup()
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Лабораторная работа №1: Диаграмма функций (PySide)")
-        self.resize(1000, 800)
+        self.setWindowTitle(WINDOW_TITLE)
+        self.resize(*WINDOW_SIZE)
+        
+        # Создаем главный виджет и layout
+        main_widget = QWidget()
         main_layout = QVBoxLayout()
+        main_widget.setLayout(main_layout)
+        
+        # Добавляем график
         self.plot_widget = PlotWidget()
         main_layout.addWidget(self.plot_widget)
+        
+        # Добавляем легенду под графиком
+        self.legend_widget = LegendWidget()
+        main_layout.addWidget(self.legend_widget)
+        
+        # Добавляем панель управления
         controls_layout = QHBoxLayout()
         
         # Настройка спинбокса для начала интервала
@@ -424,7 +472,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Количество точек:"))
         controls_layout.addWidget(self.points_spin)
         
-        self.func_combo = QComboBox()
+        self.func_combo = CustomComboBox()
         self.func_combo.setView(QListView())
         self.func_combo.setEditable(True)
         self.func_combo.lineEdit().setReadOnly(True)
@@ -444,9 +492,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Функции (выберите):"))
         controls_layout.addWidget(self.func_combo)
         main_layout.addLayout(controls_layout)
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
+        self.setCentralWidget(main_widget)
         
         # Настройка таймера обновления
         self.update_timer = QTimer()
@@ -495,6 +541,7 @@ class MainWindow(QMainWindow):
                     "color": FUNCTION_COLORS.get(func_id, QColor(Qt.black))
                 })
         self.plot_widget.setData(data_list)
+        self.legend_widget.setData(data_list)  # Обновляем данные легенды
 
     def on_start_changed(self, value):
         """
