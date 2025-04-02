@@ -369,6 +369,14 @@ class ConeRenderer:
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(color.darker(150), 2))
         painter.drawPath(path)
+
+        path1 = QPainterPath()
+        path1.moveTo(base_x, base_y)
+        path1.lineTo(base_x + width_val, base_y)
+        path1.closeSubpath()
+        painter.setBrush(QBrush(color))
+        painter.setPen(QPen(color, 2))
+        painter.drawPath(path1)
         
         # Рисуем видимую часть основания поверх боковой грани
         if is_upward:
