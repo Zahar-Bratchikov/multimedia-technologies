@@ -37,7 +37,7 @@ def function_3(x):
         y = 10 / (x - 1)
         y[np.abs(x - 1) < 1e-6] = np.nan
         return y
-
+    
 
 def get_function_data(func_id, start, end, num_points):
     """

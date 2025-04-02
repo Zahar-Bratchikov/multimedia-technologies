@@ -68,7 +68,7 @@ class Settings:
     SHIFT_Y_FACTOR = 2.5
     FIXED_BASE_WIDTH = 40
     
-    # Цвета функций
+    # Цвета функций Для добавления новых функций добавить цвета
     FUNCTION_COLORS = {
         1: QColor(Qt.blue),
         2: QColor(Qt.green),
@@ -101,7 +101,7 @@ class FunctionManager:
             list: Список кортежей (подпись, идентификатор функции).
         """
         func_list = []
-        for func_id in range(1, 5):  # Увеличил диапазон до 5 для поддержки дополнительных функций
+        for func_id in range(1, 4):  # Увеличить диапазон для добавления новых функций  
             func = getattr(functions, f"function_{func_id}", None)
             if callable(func):
                 doc = func.__doc__.strip() if func.__doc__ else "Нет описания"
@@ -239,56 +239,82 @@ class PlotData:
     """
     Класс для хранения и управления данными графика.
     
-    Этот класс хранит:
-    - Данные функций
-    - Диапазоны осей
-    - Параметры отображения
+    Этот класс отвечает за:
+    - Хранение данных функций
+    - Расчет диапазонов значений для осей
+    - Подготовку данных для отображения
+    - Настройку параметров сетки
+    
+    Attributes:
+        data (list): Список словарей с данными функций
+        y_min (float): Минимальное значение по оси Y
+        y_max (float): Максимальное значение по оси Y
+        user_x_start (float): Начало интервала по оси X, заданное пользователем
+        user_x_end (float): Конец интервала по оси X, заданное пользователем
+        default_points (int): Количество точек для отображения
+        extra_margin (float): Дополнительный отступ для графика
     """
     
     def __init__(self):
         """
-        Инициализирует объект данных графика.
+        Инициализирует объект данных графика со значениями по умолчанию.
         """
-        self.data = []
-        self.y_min = -10
-        self.y_max = 10
-        self.user_x_start = Settings.DEFAULT_X_RANGE[0]
-        self.user_x_end = Settings.DEFAULT_X_RANGE[1]
-        self.default_points = Settings.DEFAULT_POINTS
-        self.extra_margin = 1
+        self.data = []                               # Данные функций
+        self.y_min = -10                             # Минимум по оси Y
+        self.y_max = 10                              # Максимум по оси Y
+        self.user_x_start = Settings.DEFAULT_X_RANGE[0]  # Начало интервала
+        self.user_x_end = Settings.DEFAULT_X_RANGE[1]    # Конец интервала
+        self.default_points = Settings.DEFAULT_POINTS    # Число точек
+        self.extra_margin = 1                        # Дополнительный отступ
 
     def update_data(self, data_list):
         """
         Обновляет данные и пересчитывает диапазон оси Y.
         
+        Этот метод анализирует значения функций, определяет минимум и максимум,
+        а также добавляет небольшой отступ для лучшего отображения.
+        
         Args:
             data_list (list): Список словарей с данными функций
+                Каждый словарь содержит ключи: "x", "y", "label", "color"
         """
         self.data = data_list
+        
+        # Если есть данные, пересчитываем диапазон по оси Y
         if self.data:
+            # Объединяем все значения Y всех функций, исключая NaN
             all_y = np.concatenate([d["y"][~np.isnan(d["y"])] for d in self.data])
+            
             if len(all_y) > 0:
+                # Добавляем 10% отступа для лучшего отображения
                 margin_y = (all_y.max() - all_y.min()) * 0.1
                 computed_y_min = all_y.min() - margin_y
                 computed_y_max = all_y.max() + margin_y
+                
+                # Убеждаемся, что 0 входит в диапазон (для корректного отображения оси X)
                 self.y_min = min(computed_y_min, 0)
                 self.y_max = max(computed_y_max, 0)
 
     def get_grid_ranges(self, step_x):
         """
-        Возвращает диапазоны для сетки.
+        Возвращает расширенные диапазоны для сетки.
+        
+        Расширяет диапазоны по осям X и Y с учетом дополнительных клеток сетки для
+        лучшего визуального отображения графика.
         
         Args:
             step_x (float): Шаг по оси X
             
         Returns:
-            tuple: Кортеж с диапазонами для сетки
+            tuple: Кортеж с диапазонами для сетки:
+                (grid_x_min, grid_x_max, grid_x_range, grid_y_min, grid_y_max, grid_y_range)
         """
+        # Расширяем диапазон по оси Y с учетом дополнительного отступа
         grid_y_min = self.y_min - self.extra_margin
         grid_y_max = self.y_max + self.extra_margin
         grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else Settings.SMALL_VALUE
 
-        # Добавляем по одной дополнительной клетке с каждой стороны
+        # Добавляем по одной дополнительной клетке с каждой стороны по оси X
         grid_x_min = self.user_x_start - step_x
         grid_x_max = self.user_x_end + step_x
         grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else Settings.SMALL_VALUE
@@ -428,10 +454,7 @@ class PlotWidget(QWidget):
         plot_height = h - Settings.MARGIN_TOP - Settings.MARGIN_BOTTOM
 
         # Получаем шаг по оси X
-        if self.plot_data.default_points > 1:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
-        else:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
+        step_x = self._get_x_step()
 
         # Получаем диапазоны осей
         grid_x_min, grid_x_max, grid_x_range, grid_y_min, grid_y_max, grid_y_range = self.plot_data.get_grid_ranges(step_x)
@@ -451,24 +474,62 @@ class PlotWidget(QWidget):
             'step_x': step_x
         }
 
-    def to_pixel_x(self, x):
-        """Преобразует X-координату из системы координат данных в пиксели."""
-        plot_width = self.width() - Settings.MARGIN_LEFT - Settings.MARGIN_RIGHT
+    def _get_x_step(self):
+        """
+        Вычисляет шаг по оси X с учетом количества точек.
         
-        # Используем расширенный диапазон с одной дополнительной клеткой с каждой стороны
+        Returns:
+            float: Шаг между точками по оси X
+        """
         if self.plot_data.default_points > 1:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
+            # Для множества точек вычисляем равномерный шаг
+            return (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
         else:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
-            
+            # Для одной точки используем либо весь диапазон, либо значение по умолчанию
+            return (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
+
+    def _get_extended_x_range(self):
+        """
+        Возвращает расширенный диапазон по оси X с дополнительными клетками.
+        
+        Returns:
+            tuple: Кортеж (grid_x_min, grid_x_max) с расширенным диапазоном
+        """
+        step_x = self._get_x_step()
+        # Добавляем по одной дополнительной клетке с каждой стороны
         grid_x_min = self.plot_data.user_x_start - step_x
         grid_x_max = self.plot_data.user_x_end + step_x
+        return grid_x_min, grid_x_max
+
+    def to_pixel_x(self, x):
+        """
+        Преобразует X-координату из системы координат данных в пиксели.
+        
+        Args:
+            x (float): Координата X в системе данных
+            
+        Returns:
+            int: Координата X в пикселях
+        """
+        plot_width = self.width() - Settings.MARGIN_LEFT - Settings.MARGIN_RIGHT
+        
+        # Получаем расширенный диапазон X
+        grid_x_min, grid_x_max = self._get_extended_x_range()
         x_range = grid_x_max - grid_x_min
         
+        # Преобразуем координаты
         return int(Settings.MARGIN_LEFT + (x - grid_x_min) * plot_width / x_range)
 
     def to_pixel_y(self, y):
-        """Преобразует Y-координату из системы координат данных в пиксели."""
+        """
+        Преобразует Y-координату из системы координат данных в пиксели.
+        
+        Args:
+            y (float): Координата Y в системе данных
+            
+        Returns:
+            int: Координата Y в пикселях
+        """
         if not self.plot_data.data:
             return self.height() - Settings.MARGIN_BOTTOM
             
@@ -490,7 +551,7 @@ class PlotWidget(QWidget):
         min_y = min(min_y, 0)
         max_y = max(max_y, 0)
         
-        # Особая обработка для случая с одной точкой
+        # Рассчитываем параметры отображения в зависимости от количества точек
         if self.plot_data.default_points == 1:
             # Создаем искусственный диапазон вокруг единственного значения
             cell_size = 1.0  # Фиксированный размер клетки для одной точки
@@ -504,6 +565,8 @@ class PlotWidget(QWidget):
             plot_max_y = max_y + cell_size
             
         plot_range = plot_max_y - plot_min_y
+        
+        # Инвертируем Y-координату (в Qt ось Y направлена вниз)
         return int(self.height() - Settings.MARGIN_BOTTOM - (y - plot_min_y) * plot_height / plot_range)
 
     def draw_background(self, painter, w, h):
@@ -522,64 +585,92 @@ class PlotWidget(QWidget):
         self._draw_vertical_grid(painter, h)
 
     def draw_axes(self, painter, w, h):
-        """Рисует оси координат."""
-        # Горизонтальная ось y = 0
+        """
+        Рисует оси координат.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            w (int): Ширина области отрисовки
+            h (int): Высота области отрисовки
+        """
+        # Рисуем горизонтальную ось y = 0
         zero_y = self.to_pixel_y(0)
-        painter.setPen(QPen(Qt.black, 2))
+        painter.setPen(QPen(Qt.black, 2))  # Делаем оси толще чем линии сетки
         painter.drawLine(Settings.MARGIN_LEFT, zero_y, w - Settings.MARGIN_RIGHT, zero_y)
 
-        # Вертикальная ось x = 0 (только если она в пределах области графика)
-        if self.plot_data.user_x_start - self.coordinate_transformer['step_x'] <= 0 <= self.plot_data.user_x_end + self.coordinate_transformer['step_x']:
+        # Проверяем, попадает ли ось X = 0 в область отображения с учетом расширенного диапазона
+        grid_x_min, grid_x_max = self._get_extended_x_range()
+        if grid_x_min <= 0 <= grid_x_max:
+            # Определяем координаты оси X = 0 в пикселях
             x_zero = self.to_pixel_x(0)
+            # Ограничиваем координаты рабочей областью
             x_zero = max(Settings.MARGIN_LEFT, min(w - Settings.MARGIN_RIGHT, x_zero))
+            
+            # Рисуем вертикальную ось
             painter.drawLine(x_zero, Settings.MARGIN_TOP, x_zero, h - Settings.MARGIN_BOTTOM)
             
-            # Подписи к осям
+            # Добавляем подпись к началу координат
             painter.setPen(QPen(Qt.black, 1))
             painter.drawText(x_zero - 20, h - Settings.MARGIN_BOTTOM + 20, "0.00")
 
     def draw_cones(self, painter, w, h):
-        """Рисует конусы для отображения данных."""
-        num_points = len(self.plot_data.data[0]["x"])
-        num_funcs = len(self.plot_data.data)
+        """
+        Рисует конусы для отображения данных функций.
         
-        if num_points == 0:
+        Конусы представляют значения функций в каждой точке. 
+        Высота конуса соответствует значению функции, а цвет - выбранной функции.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            w (int): Ширина области отрисовки
+            h (int): Высота области отрисовки
+        """
+        # Проверяем наличие точек и функций для отображения
+        if not self.plot_data.data or len(self.plot_data.data[0]["x"]) == 0:
             return
             
-        # Вычисляем размеры для конусов
+        num_points = len(self.plot_data.data[0]["x"])  # Количество точек
+        num_funcs = len(self.plot_data.data)           # Количество функций
+            
+        # Определяем границы для размещения конусов
         # Используем точки данных непосредственно, без учета дополнительных клеток
         left_bound_plot = self.to_pixel_x(self.plot_data.data[0]["x"][0])
         right_bound_plot = self.to_pixel_x(self.plot_data.data[0]["x"][-1])
+        
+        # Вычисляем ширину группы конусов для одной точки данных
         group_width = (right_bound_plot - left_bound_plot) * Settings.CONE_SCALE / (num_points if num_points > 1 else 1)
 
-        # Определяем ширину ячейки и смещения
+        # Настраиваем параметры отображения конусов
+        # Для малого числа точек используем фиксированную ширину
         cell_width = Settings.FIXED_BASE_WIDTH if num_points <= 3 else group_width / (num_funcs + 1)
-        cone_base_width = cell_width * Settings.CONE_BASE_RATIO
-        ellipse_height = int(cone_base_width * 0.6)
+        cone_base_width = cell_width * Settings.CONE_BASE_RATIO  # Ширина основания конуса
+        ellipse_height = int(cone_base_width * 0.6)              # Высота эллипса основания
         
-        # Настраиваем смещения для конусов
-        horizontal_shift = cell_width * 1.2
-        vertical_shift = ellipse_height * 0.8
+        # Настраиваем смещения для размещения конусов разных функций
+        horizontal_shift = cell_width * 1.2    # Горизонтальное смещение между конусами
+        vertical_shift = ellipse_height * 0.8  # Вертикальное смещение для наглядности
 
-        # Рисуем вертикальные линии в точках данных
+        # Рисуем вертикальные линии сетки в точках данных
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
         for i in range(num_points):
             center = self.plot_data.data[0]["x"][i]
             center_pix = self.to_pixel_x(center)
             painter.drawLine(center_pix, Settings.MARGIN_TOP, center_pix, h - Settings.MARGIN_BOTTOM)
 
-        # Рисуем конусы для каждой функции
+        # Отрисовка конусов для каждой точки и каждой функции
         for i in range(num_points):
-            center = self.plot_data.data[0]["x"][i]
-            center_pix = self.to_pixel_x(center)
-            base_centers = []
+            center = self.plot_data.data[0]["x"][i]       # X-координата точки
+            center_pix = self.to_pixel_x(center)          # X-координата в пикселях
+            base_centers = []  # Запоминаем центры оснований для соединения линиями
             
+            # Рисуем конусы для каждой функции в текущей точке
             for func_index, curve in enumerate(self.plot_data.data):
                 y_val = curve["y"][i]
+                # Пропускаем NaN значения (вне области определения функции)
                 if np.isnan(y_val):
                     continue
                 
-                # Вычисляем позицию конуса с учетом смещений
+                # Вычисляем смещения конусов для разных функций
                 x_offset = int(func_index * horizontal_shift)
                 y_offset = int(func_index * vertical_shift)
                 
@@ -587,15 +678,20 @@ class PlotWidget(QWidget):
                 apex_x = center_pix + x_offset
                 base_x = apex_x - int(cone_base_width / 2)
                 
-                # Вычисляем y-координаты с учетом смещения вверх
-                base_y = self.to_pixel_y(0) - y_offset
-                apex_y = self.to_pixel_y(curve["y"][i]) - y_offset
+                # Вычисляем y-координаты вершины и основания
+                base_y = self.to_pixel_y(0) - y_offset     # Основание на оси X
+                apex_y = self.to_pixel_y(y_val) - y_offset # Вершина на высоте значения функции
                 
+                # Запоминаем центр основания для соединительных линий
                 base_centers.append((base_x + int(cone_base_width / 2), base_y))
-                self.cone_renderer.draw_cone(painter, apex_x, apex_y, base_x, base_y, 
-                                         int(cone_base_width), ellipse_height, curve["color"])
+                
+                # Отрисовываем конус с помощью специализированного класса
+                self.cone_renderer.draw_cone(
+                    painter, apex_x, apex_y, base_x, base_y, 
+                    int(cone_base_width), ellipse_height, curve["color"]
+                )
             
-            # Рисуем соединительные линии между основаниями конусов
+            # Рисуем соединительные линии между основаниями конусов для наглядности
             if len(base_centers) > 1:
                 painter.setPen(QPen(Qt.black, 1))
                 for j in range(len(base_centers) - 1):
@@ -604,19 +700,50 @@ class PlotWidget(QWidget):
                     painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
 
     def _draw_single_point_grid(self, painter, w, h):
-        """Отрисовка сетки для случая с одной точкой."""
+        """
+        Отрисовка сетки для случая с одной точкой.
+        
+        Специальная обработка для случая, когда у нас только одна точка данных.
+        Рисует горизонтальные линии на каждой функции и на нуле.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            w (int): Ширина области отрисовки
+            h (int): Высота области отрисовки
+        """
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+        
+        # Проходим по каждой функции
         for func_index, curve in enumerate(self.plot_data.data):
+            # Определяем позицию базовой линии (на оси X)
             base_y = self.to_pixel_y(0)
+            
+            # Вычисляем смещение точки от базовой линии
             shift_y = self.to_pixel_y(curve["y"][0]) - base_y
+            
+            # Y-координата для точки с учетом смещения функций
             y_pos = self.to_pixel_y(curve["y"][0]) + int(func_index * shift_y)
+            
+            # Рисуем горизонтальную линию через точку
             painter.drawLine(Settings.MARGIN_LEFT, y_pos, w - Settings.MARGIN_RIGHT, y_pos)
+            
+            # Добавляем подпись значения
             painter.setPen(QPen(Qt.black, 1))
-            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pos + 5, f"{curve['y'][0]:.2f}")
+            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pos + 5, f"{curve['y'][0]:.3f}")
+            
+            # Возвращаем стиль линии для сетки
             painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
 
     def _draw_horizontal_grid(self, painter, w, h):
-        """Отрисовка горизонтальной сетки."""
+        """
+        Отрисовка горизонтальной сетки.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            w (int): Ширина области отрисовки
+            h (int): Высота области отрисовки
+        """
+        # Проверяем наличие данных для построения
         if not self.plot_data.data:
             return
             
@@ -624,104 +751,138 @@ class PlotWidget(QWidget):
         min_y = float('inf')
         max_y = float('-inf')
         for curve in self.plot_data.data:
+            # Фильтруем NaN значения
             valid_y = curve["y"][~np.isnan(curve["y"])]
             if len(valid_y) > 0:
                 min_y = min(min_y, np.min(valid_y))
                 max_y = max(max_y, np.max(valid_y))
         
+        # Если нет данных, выходим
         if min_y == float('inf') or max_y == float('-inf'):
             return
             
-        # Убеждаемся, что 0 входит в диапазон
+        # Убеждаемся, что 0 входит в диапазон (для корректного отображения оси X)
         min_y = min(min_y, 0)
         max_y = max(max_y, 0)
         
         # Особая обработка для случая с одной точкой
         if self.plot_data.default_points == 1:
-            # Создаем искусственный диапазон вокруг единственного значения
-            cell_size = 1.0  # Фиксированный размер клетки для одной точки
-            plot_min_y = min_y - cell_size
-            plot_max_y = max_y + cell_size
+            # Для одной точки создаем искусственный диапазон с фиксированным размером клетки
+            cell_size = 1.0
+            plot_min_y = min_y - cell_size  # Одна клетка снизу
+            plot_max_y = max_y + cell_size  # Одна клетка сверху
             num_lines = 3  # Три линии: снизу, в точке и сверху
         else:
-            # Стандартная обработка для множества точек
+            # Для множества точек вычисляем размер клетки на основе диапазона значений
             y_range = max_y - min_y
             cell_size = y_range / (self.plot_data.default_points - 1)
-            plot_min_y = min_y - cell_size
-            plot_max_y = max_y + cell_size
+            plot_min_y = min_y - cell_size  # Одна клетка снизу
+            plot_max_y = max_y + cell_size  # Одна клетка сверху
             num_lines = self.plot_data.default_points + 2  # +2 для дополнительных линий
         
-        # Рисуем линии сетки
+        # Рисуем горизонтальные линии сетки с равным шагом
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
         step = (plot_max_y - plot_min_y) / (num_lines - 1) if num_lines > 1 else 0
         
+        # Рисуем линии сетки и подписи к ним
         for i in range(num_lines):
             y_val = plot_min_y + i * step
             y_pix = self.to_pixel_y(y_val)
             
-            # Используем более жирную линию для оси X
+            # Используем более жирную линию для оси X (если близко к 0)
             if abs(y_val) < step / 1000:  # Проверка на близость к 0
                 painter.setPen(QPen(Qt.black, 2))
             else:
                 painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
                 
+            # Рисуем горизонтальную линию сетки
             painter.drawLine(Settings.MARGIN_LEFT, y_pix, w - Settings.MARGIN_RIGHT, y_pix)
             
             # Рисуем подпись значения
             painter.setPen(QPen(Qt.black, 1))
             painter.setFont(QFont(Settings.FONT_FAMILY, Settings.FONT_SIZE))
-            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pix + 5, f"{y_val:.2f}")
+            # Используем 3 десятичных знака для повышения точности отображения
+            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pix + 5, f"{y_val:.3f}")
             painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
 
     def _draw_vertical_grid(self, painter, h):
-        """Отрисовка вертикальной сетки."""
+        """
+        Отрисовка вертикальной сетки.
+        
+        Args:
+            painter (QPainter): Объект для отрисовки
+            h (int): Высота области отрисовки
+        """
         painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
         
-        # Получаем шаг по оси X
-        if self.plot_data.default_points > 1:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
-        else:
-            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
+        # Получаем шаг и диапазон для отрисовки сетки
+        step_x = self._get_x_step()
+        grid_x_min, grid_x_max = self._get_extended_x_range()
         
-        # Начинаем с позиции на две линии левее начала интервала
-        x_val = self.plot_data.user_x_start - 2 * step_x
-        # Заканчиваем на две линии правее конца интервала
-        end_x = self.plot_data.user_x_end + 2 * step_x
-        
-        # Рисуем все вертикальные линии
-        while x_val <= end_x + step_x/2:  # step_x/2 для компенсации погрешности округления
+        # Рисуем вертикальные линии сетки с шагом step_x
+        x_val = grid_x_min
+        while x_val <= grid_x_max + step_x/2:  # step_x/2 для компенсации погрешности округления
             x_pix = self.to_pixel_x(x_val)
+            
+            # Рисуем линию сетки
             painter.drawLine(x_pix, Settings.MARGIN_TOP, x_pix, h - Settings.MARGIN_BOTTOM)
+            
+            # Добавляем подпись значения
             painter.setPen(QPen(Qt.black, 1))
             painter.drawText(x_pix - 20, h - Settings.MARGIN_BOTTOM + 20, f"{x_val:.2f}")
+            
+            # Возвращаем стиль линии для сетки
             painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
+            
+            # Переходим к следующей линии
             x_val += step_x
 
     @staticmethod
     def _nice_num(x, round_val):
-        """Вычисляет 'приятное' число для шага сетки."""
+        """
+        Вычисляет 'приятное' число для шага сетки.
+        
+        Функция выбирает округленные значения, которые лучше воспринимаются
+        человеком (например, 1, 2, 5, 10 или их степени).
+        
+        Args:
+            x (float): Исходное число
+            round_val (bool): Нужно ли округлять вверх (True) или вниз (False)
+            
+        Returns:
+            float: 'Приятное' число для шага сетки
+        """
+        # Особый случай - нулевое значение
         if x == 0:
             return 0
+            
+        # Находим порядок числа
         exp = math.floor(math.log10(x))
-        f = x / (10 ** exp)
+        f = x / (10 ** exp)  # Мантисса (десятичная часть)
+        
+        # Выбираем 'приятное' значение
         if round_val:
+            # Округление с приоритетом округления вверх
             if f < 1.5:
-                nf = 1
+                nf = 1      # Для значений < 1.5, используем 1
             elif f < 3:
-                nf = 2
+                nf = 2      # Для значений 1.5-3, используем 2
             elif f < 7:
-                nf = 5
+                nf = 5      # Для значений 3-7, используем 5
             else:
-                nf = 10
+                nf = 10     # Для значений > 7, используем 10
         else:
+            # Округление с приоритетом округления вниз
             if f <= 1:
-                nf = 1
+                nf = 1      # Для значений <= 1, используем 1
             elif f <= 2:
-                nf = 2
+                nf = 2      # Для значений 1-2, используем 2
             elif f <= 5:
-                nf = 5
+                nf = 5      # Для значений 2-5, используем 5
             else:
-                nf = 10
+                nf = 10     # Для значений > 5, используем 10
+                
+        # Возвращаем число, умноженное на степень 10
         return nf * (10 ** exp)
 
 
