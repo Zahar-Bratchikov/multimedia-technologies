@@ -734,15 +734,15 @@ class ControlPanel(QWidget):
     
     def on_start_changed(self, value):
         """Обработчик изменения значения начала интервала."""
-        self.end_spin.setMinimum(value + 0.1)
+        self.end_spin.setMinimum(value + 0.01)
         if self.end_spin.value() <= value:
-            self.end_spin.setValue(value + 0.1)
+            self.end_spin.setValue(value + 0.01)
     
     def on_end_changed(self, value):
         """Обработчик изменения значения конца интервала."""
-        self.start_spin.setMaximum(value - 0.1)
+        self.start_spin.setMaximum(value - 0.01)
         if self.start_spin.value() >= value:
-            self.start_spin.setValue(value - 0.1)
+            self.start_spin.setValue(value - 0.01)
     
     def get_plot_parameters(self):
         """Возвращает параметры для построения графика."""
