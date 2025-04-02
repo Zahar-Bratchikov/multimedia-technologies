@@ -17,42 +17,21 @@ import numpy as np
 
 def function_1(x):
     """
-    Вычисляет значение функции 5 * cos(x).
-
-    Args:
-        x (numpy.ndarray): Массив значений аргумента x.
-
-    Returns:
-        numpy.ndarray: Массив значений функции 5 * cos(x).
+    5 * cos(x).
     """
     return 5 * np.cos(x)
 
 
 def function_2(x):
     """
-    Вычисляет значение функции 10 * sin(x) + 5 * cos(2 * x).
-
-    Args:
-        x (numpy.ndarray): Массив значений аргумента x.
-
-    Returns:
-        numpy.ndarray: Массив значений функции 10 * sin(x) + 5 * cos(2 * x).
+    10 * sin(x) + 5 * cos(2 * x).
     """
     return 10 * np.sin(x) + 5 * np.cos(2 * x)
 
 
 def function_3(x):
     """
-    Вычисляет значение функции 10 / (x - 1) с обработкой деления на 0.
-
-    Функция возвращает NaN для значений x, близких к 1 (|x-1| < 1e-6),
-    чтобы избежать деления на ноль.
-
-    Args:
-        x (numpy.ndarray): Массив значений аргумента x.
-
-    Returns:
-        numpy.ndarray: Массив значений функции 10 / (x - 1) с NaN для x ≈ 1.
+    10 / (x - 1) с обработкой деления на 0.
     """
     with np.errstate(divide='ignore', invalid='ignore'):
         y = 10 / (x - 1)

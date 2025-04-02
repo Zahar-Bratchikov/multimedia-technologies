@@ -150,11 +150,6 @@ class FunctionManager:
         return data_list
 
 
-# Заменяем глобальную функцию на метод класса
-def get_available_functions():
-    return FunctionManager.get_available_functions()
-
-
 class LegendWidget(QWidget):
     """
     Виджет для отображения легенды графика.
@@ -365,16 +360,6 @@ class ConeRenderer:
             painter.setBrush(QBrush(highlight_color))
             painter.drawArc(*ellipse_rect, 180 * 16, -180 * 16)
         
-        # Добавляем блик на боковой грани
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QBrush(color.lighter(120)))
-        highlight_path = QPainterPath()
-        highlight_path.moveTo(apex_x, apex_y)
-        highlight_path.lineTo(base_x + width_val * 0.3, base_y)
-        highlight_path.lineTo(base_x + width_val * 0.7, base_y)
-        highlight_path.closeSubpath()
-        painter.drawPath(highlight_path)
-
 
 class PlotWidget(QWidget):
     """
@@ -661,7 +646,7 @@ class CustomComboBox(QComboBox):
         Args:
             event: Событие мыши
         """
-        if self.rect().contains(event.pos()):
+        if self.rect().contains(event.position().toPoint()):
             self.showPopup()
         super().mouseReleaseEvent(event)
 
@@ -731,7 +716,7 @@ class ControlPanel(QWidget):
         self.func_combo.setMinimumContentsLength(20)
         
         self.func_model = QStandardItemModel(self.func_combo)
-        for label, func_id in get_available_functions():
+        for label, func_id in FunctionManager.get_available_functions():
             item = QStandardItem(label)
             item.setData(func_id)
             item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
