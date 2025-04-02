@@ -288,6 +288,7 @@ class PlotData:
         grid_y_max = self.y_max + self.extra_margin
         grid_y_range = grid_y_max - grid_y_min if grid_y_max != grid_y_min else Settings.SMALL_VALUE
 
+        # Добавляем по одной дополнительной клетке с каждой стороны
         grid_x_min = self.user_x_start - step_x
         grid_x_max = self.user_x_end + step_x
         grid_x_range = grid_x_max - grid_x_min if grid_x_max != grid_x_min else Settings.SMALL_VALUE
@@ -452,14 +453,58 @@ class PlotWidget(QWidget):
 
     def to_pixel_x(self, x):
         """Преобразует X-координату из системы координат данных в пиксели."""
-        return int(Settings.MARGIN_LEFT + (x - self.coordinate_transformer['grid_x_min']) / 
-                  self.coordinate_transformer['grid_x_range'] * self.coordinate_transformer['plot_width'])
+        plot_width = self.width() - Settings.MARGIN_LEFT - Settings.MARGIN_RIGHT
+        
+        # Используем расширенный диапазон с одной дополнительной клеткой с каждой стороны
+        if self.plot_data.default_points > 1:
+            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
+        else:
+            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
+            
+        grid_x_min = self.plot_data.user_x_start - step_x
+        grid_x_max = self.plot_data.user_x_end + step_x
+        x_range = grid_x_max - grid_x_min
+        
+        return int(Settings.MARGIN_LEFT + (x - grid_x_min) * plot_width / x_range)
 
     def to_pixel_y(self, y):
         """Преобразует Y-координату из системы координат данных в пиксели."""
-        return int(self.coordinate_transformer['h'] - Settings.MARGIN_BOTTOM - 
-                  (y - self.coordinate_transformer['grid_y_min']) / 
-                  self.coordinate_transformer['grid_y_range'] * self.coordinate_transformer['plot_height'])
+        if not self.plot_data.data:
+            return self.height() - Settings.MARGIN_BOTTOM
+            
+        plot_height = self.height() - Settings.MARGIN_TOP - Settings.MARGIN_BOTTOM
+        
+        # Находим минимальное и максимальное значения функций
+        min_y = float('inf')
+        max_y = float('-inf')
+        for curve in self.plot_data.data:
+            valid_y = curve["y"][~np.isnan(curve["y"])]
+            if len(valid_y) > 0:
+                min_y = min(min_y, np.min(valid_y))
+                max_y = max(max_y, np.max(valid_y))
+        
+        if min_y == float('inf') or max_y == float('-inf'):
+            return self.height() - Settings.MARGIN_BOTTOM
+            
+        # Убеждаемся, что 0 входит в диапазон
+        min_y = min(min_y, 0)
+        max_y = max(max_y, 0)
+        
+        # Особая обработка для случая с одной точкой
+        if self.plot_data.default_points == 1:
+            # Создаем искусственный диапазон вокруг единственного значения
+            cell_size = 1.0  # Фиксированный размер клетки для одной точки
+            plot_min_y = min_y - cell_size
+            plot_max_y = max_y + cell_size
+        else:
+            # Стандартная обработка для множества точек
+            y_range = max_y - min_y
+            cell_size = y_range / (self.plot_data.default_points - 1)
+            plot_min_y = min_y - cell_size
+            plot_max_y = max_y + cell_size
+            
+        plot_range = plot_max_y - plot_min_y
+        return int(self.height() - Settings.MARGIN_BOTTOM - (y - plot_min_y) * plot_height / plot_range)
 
     def draw_background(self, painter, w, h):
         """Рисует фон и границы виджета."""
@@ -484,7 +529,7 @@ class PlotWidget(QWidget):
         painter.drawLine(Settings.MARGIN_LEFT, zero_y, w - Settings.MARGIN_RIGHT, zero_y)
 
         # Вертикальная ось x = 0 (только если она в пределах области графика)
-        if self.plot_data.user_x_start <= 0 <= self.plot_data.user_x_end:
+        if self.plot_data.user_x_start - self.coordinate_transformer['step_x'] <= 0 <= self.plot_data.user_x_end + self.coordinate_transformer['step_x']:
             x_zero = self.to_pixel_x(0)
             x_zero = max(Settings.MARGIN_LEFT, min(w - Settings.MARGIN_RIGHT, x_zero))
             painter.drawLine(x_zero, Settings.MARGIN_TOP, x_zero, h - Settings.MARGIN_BOTTOM)
@@ -502,9 +547,10 @@ class PlotWidget(QWidget):
             return
             
         # Вычисляем размеры для конусов
-        left_bound_plot = self.to_pixel_x(self.plot_data.user_x_start + self.coordinate_transformer['step_x'])
-        right_bound_plot = self.to_pixel_x(self.plot_data.user_x_end - self.coordinate_transformer['step_x'])
-        group_width = (right_bound_plot - left_bound_plot) * Settings.CONE_SCALE / (num_points if num_points else 1)
+        # Используем точки данных непосредственно, без учета дополнительных клеток
+        left_bound_plot = self.to_pixel_x(self.plot_data.data[0]["x"][0])
+        right_bound_plot = self.to_pixel_x(self.plot_data.data[0]["x"][-1])
+        group_width = (right_bound_plot - left_bound_plot) * Settings.CONE_SCALE / (num_points if num_points > 1 else 1)
 
         # Определяем ширину ячейки и смещения
         cell_width = Settings.FIXED_BASE_WIDTH if num_points <= 3 else group_width / (num_funcs + 1)
@@ -571,31 +617,79 @@ class PlotWidget(QWidget):
 
     def _draw_horizontal_grid(self, painter, w, h):
         """Отрисовка горизонтальной сетки."""
-        y_range = self.plot_data.y_max + self.plot_data.extra_margin - (self.plot_data.y_min - self.plot_data.extra_margin)
-        target_lines = 5
-        step_y = self._nice_num(y_range / target_lines, True)
-        tick_start = math.floor((self.plot_data.y_min - self.plot_data.extra_margin) / step_y) * step_y
-        tick_end = math.ceil((self.plot_data.y_max + self.plot_data.extra_margin) / step_y) * step_y
+        if not self.plot_data.data:
+            return
+            
+        # Находим минимальное и максимальное значения функций
+        min_y = float('inf')
+        max_y = float('-inf')
+        for curve in self.plot_data.data:
+            valid_y = curve["y"][~np.isnan(curve["y"])]
+            if len(valid_y) > 0:
+                min_y = min(min_y, np.min(valid_y))
+                max_y = max(max_y, np.max(valid_y))
         
+        if min_y == float('inf') or max_y == float('-inf'):
+            return
+            
+        # Убеждаемся, что 0 входит в диапазон
+        min_y = min(min_y, 0)
+        max_y = max(max_y, 0)
+        
+        # Особая обработка для случая с одной точкой
+        if self.plot_data.default_points == 1:
+            # Создаем искусственный диапазон вокруг единственного значения
+            cell_size = 1.0  # Фиксированный размер клетки для одной точки
+            plot_min_y = min_y - cell_size
+            plot_max_y = max_y + cell_size
+            num_lines = 3  # Три линии: снизу, в точке и сверху
+        else:
+            # Стандартная обработка для множества точек
+            y_range = max_y - min_y
+            cell_size = y_range / (self.plot_data.default_points - 1)
+            plot_min_y = min_y - cell_size
+            plot_max_y = max_y + cell_size
+            num_lines = self.plot_data.default_points + 2  # +2 для дополнительных линий
+        
+        # Рисуем линии сетки
         painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-        tick = tick_start
-        while tick <= tick_end:
-            y_pix = self.to_pixel_y(tick)
+        step = (plot_max_y - plot_min_y) / (num_lines - 1) if num_lines > 1 else 0
+        
+        for i in range(num_lines):
+            y_val = plot_min_y + i * step
+            y_pix = self.to_pixel_y(y_val)
+            
+            # Используем более жирную линию для оси X
+            if abs(y_val) < step / 1000:  # Проверка на близость к 0
+                painter.setPen(QPen(Qt.black, 2))
+            else:
+                painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
+                
             painter.drawLine(Settings.MARGIN_LEFT, y_pix, w - Settings.MARGIN_RIGHT, y_pix)
+            
+            # Рисуем подпись значения
             painter.setPen(QPen(Qt.black, 1))
             painter.setFont(QFont(Settings.FONT_FAMILY, Settings.FONT_SIZE))
-            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pix + 5, f"{tick:.2f}")
+            painter.drawText(w - Settings.MARGIN_RIGHT + 5, y_pix + 5, f"{y_val:.2f}")
             painter.setPen(QPen(Qt.lightGray, 1, Qt.DashLine))
-            tick += step_y
 
     def _draw_vertical_grid(self, painter, h):
         """Отрисовка вертикальной сетки."""
         painter.setPen(QPen(Qt.darkGray, 1, Qt.DashDotLine))
-        x_val = self.coordinate_transformer['grid_x_min']
-        step_x = self.coordinate_transformer['step_x']
-        grid_x_max = self.coordinate_transformer['grid_x_max']
         
-        while x_val <= grid_x_max + step_x / 2:
+        # Получаем шаг по оси X
+        if self.plot_data.default_points > 1:
+            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) / (self.plot_data.default_points - 1)
+        else:
+            step_x = (self.plot_data.user_x_end - self.plot_data.user_x_start) if (self.plot_data.user_x_end != self.plot_data.user_x_start) else 1
+        
+        # Начинаем с позиции на две линии левее начала интервала
+        x_val = self.plot_data.user_x_start - 2 * step_x
+        # Заканчиваем на две линии правее конца интервала
+        end_x = self.plot_data.user_x_end + 2 * step_x
+        
+        # Рисуем все вертикальные линии
+        while x_val <= end_x + step_x/2:  # step_x/2 для компенсации погрешности округления
             x_pix = self.to_pixel_x(x_val)
             painter.drawLine(x_pix, Settings.MARGIN_TOP, x_pix, h - Settings.MARGIN_BOTTOM)
             painter.setPen(QPen(Qt.black, 1))
