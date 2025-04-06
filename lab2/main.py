@@ -405,31 +405,40 @@ class Letter3D:
     
     def update_transform(self):
         # Создаем матрицы трансформации
+        # В этой версии все трансформации применяются относительно мировых координат,
+        # а не относительно осей объекта
+        
+        # Начинаем с единичной матрицы
+        self.transform_matrix = Matrix4x4.identity()
+        
+        # 1. Сначала применяем масштабирование (относительно начала координат)
         scale_matrix = Matrix4x4.scale(self.scale_factors.x, self.scale_factors.y, self.scale_factors.z)
+        self.transform_matrix = self.transform_matrix @ scale_matrix
         
-        # Применяем вращения в правильном порядке
-        rotation_x = Matrix4x4.rotation_around_x(self.rotation.x)
-        rotation_y = Matrix4x4.rotation_around_y(self.rotation.y)
-        rotation_z = Matrix4x4.rotation_around_z(self.rotation.z)
-        rotation_matrix = rotation_z @ rotation_y @ rotation_x
-        
-        # Добавляем отражения при необходимости
+        # 2. Применяем отражения относительно мировых осей
         if self.x_flipped:
             reflection_x = Matrix4x4.reflection_x()
-            rotation_matrix = rotation_matrix @ reflection_x
+            self.transform_matrix = self.transform_matrix @ reflection_x
         
         if self.y_flipped:
             reflection_y = Matrix4x4.reflection_y()
-            rotation_matrix = rotation_matrix @ reflection_y
+            self.transform_matrix = self.transform_matrix @ reflection_y
         
         if self.z_flipped:
             reflection_z = Matrix4x4.reflection_z()
-            rotation_matrix = rotation_matrix @ reflection_z
+            self.transform_matrix = self.transform_matrix @ reflection_z
         
+        # 3. Применяем вращения относительно мировых осей
+        rotation_x = Matrix4x4.rotation_around_x(self.rotation.x)
+        rotation_y = Matrix4x4.rotation_around_y(self.rotation.y)
+        rotation_z = Matrix4x4.rotation_around_z(self.rotation.z)
+        
+        # Порядок важен! Сначала Z, потом Y, потом X
+        self.transform_matrix = self.transform_matrix @ rotation_z @ rotation_y @ rotation_x
+        
+        # 4. И наконец применяем перемещение
         translation_matrix = Matrix4x4.translate(self.position.x, self.position.y, self.position.z)
-        
-        # Объединяем трансформации
-        self.transform_matrix = translation_matrix @ rotation_matrix @ scale_matrix
+        self.transform_matrix = self.transform_matrix @ translation_matrix
     
     def flip_x(self):
         self.x_flipped = not self.x_flipped
@@ -461,21 +470,35 @@ class Camera:
         self.projection_matrix = Matrix4x4.identity()
     
     def update_view_matrix(self):
-        # Создаем матрицу вращения для камеры
-        rot_x = Matrix4x4.rotation_around_x(self.rotation.x)
-        rot_y = Matrix4x4.rotation_around_y(self.rotation.y)
+        # Создаем матрицу вращения для камеры относительно мировых координат
+        # Порядок вращений: сначала вокруг оси Z, затем Y, затем X
         rot_z = Matrix4x4.rotation_around_z(self.rotation.z)
+        rot_y = Matrix4x4.rotation_around_y(self.rotation.y)
+        rot_x = Matrix4x4.rotation_around_x(self.rotation.x)
         
-        # Применяем вращения
-        rot_matrix = rot_x @ rot_y @ rot_z
+        # Применяем вращения в правильном порядке: Z -> Y -> X
+        rot_matrix = rot_z @ rot_y @ rot_x
         
-        # Вычисляем новую позицию камеры после вращений
+        # Вычисляем вектор направления взгляда (от позиции камеры к целевой точке)
+        direction = Vector3D(-self.position.x, -self.position.y, -self.position.z)
+        
+        # Преобразуем позицию камеры с учетом вращений
         pos_vector = np.array([self.position.x, self.position.y, self.position.z, 1.0])
         rotated_pos = rot_matrix @ pos_vector
         rotated_position = Vector3D(rotated_pos[0], rotated_pos[1], rotated_pos[2])
         
+        # Вычисляем новую целевую точку
+        target_vector = np.array([self.target.x, self.target.y, self.target.z, 1.0])
+        rotated_target = rot_matrix @ target_vector
+        rotated_target_position = Vector3D(rotated_target[0], rotated_target[1], rotated_target[2])
+        
         # Используем Look-At матрицу для создания матрицы вида
-        self.view_matrix = Matrix4x4.look_at(rotated_position, self.target, self.up)
+        # Используем фиксированный вектор "вверх" в мировых координатах (0, 0, 1)
+        up_rotated = np.array([self.up.x, self.up.y, self.up.z, 0.0])
+        rotated_up = rot_matrix @ up_rotated
+        up_vector = Vector3D(rotated_up[0], rotated_up[1], rotated_up[2])
+        
+        self.view_matrix = Matrix4x4.look_at(rotated_position, rotated_target_position, up_vector)
     
     def update_projection_matrix(self):
         self.projection_matrix = Matrix4x4.perspective(self.fov, self.aspect_ratio, self.near, self.far)
@@ -634,13 +657,13 @@ class MainWindow(QMainWindow):
         self.update_letter_type()
     
     def create_rotation_group(self):
-        # Группа вращения объекта
-        rotation_group = QGroupBox("Вращение объекта")
+        # Группа вращения объекта относительно мировых осей
+        rotation_group = QGroupBox("Вращение относительно мировых осей")
         rotation_layout = QVBoxLayout(rotation_group)
         
-        # Вращение по X
+        # Вращение вокруг мировой оси X
         rot_x_layout = QHBoxLayout()
-        rot_x_layout.addWidget(QLabel("Вращение X:"))
+        rot_x_layout.addWidget(QLabel("Вращение вокруг X:"))
         self.rot_x_slider = QSlider(Qt.Horizontal)
         self.rot_x_slider.setRange(0, 360)
         self.rot_x_slider.setValue(0)
@@ -648,9 +671,9 @@ class MainWindow(QMainWindow):
         rot_x_layout.addWidget(self.rot_x_slider)
         rotation_layout.addLayout(rot_x_layout)
         
-        # Вращение по Y
+        # Вращение вокруг мировой оси Y
         rot_y_layout = QHBoxLayout()
-        rot_y_layout.addWidget(QLabel("Вращение Y:"))
+        rot_y_layout.addWidget(QLabel("Вращение вокруг Y:"))
         self.rot_y_slider = QSlider(Qt.Horizontal)
         self.rot_y_slider.setRange(0, 360)
         self.rot_y_slider.setValue(0)
@@ -658,9 +681,9 @@ class MainWindow(QMainWindow):
         rot_y_layout.addWidget(self.rot_y_slider)
         rotation_layout.addLayout(rot_y_layout)
         
-        # Вращение по Z
+        # Вращение вокруг мировой оси Z
         rot_z_layout = QHBoxLayout()
-        rot_z_layout.addWidget(QLabel("Вращение Z:"))
+        rot_z_layout.addWidget(QLabel("Вращение вокруг Z:"))
         self.rot_z_slider = QSlider(Qt.Horizontal)
         self.rot_z_slider.setRange(0, 360)
         self.rot_z_slider.setValue(0)
@@ -671,13 +694,13 @@ class MainWindow(QMainWindow):
         return rotation_group
     
     def create_translation_group(self):
-        # Группа перемещения объекта
-        translation_group = QGroupBox("Перемещение объекта")
+        # Группа перемещения объекта в мировых координатах
+        translation_group = QGroupBox("Перемещение в мировых координатах")
         translation_layout = QVBoxLayout(translation_group)
         
-        # Перемещение по X (слева направо)
+        # Перемещение по мировой оси X
         trans_x_layout = QHBoxLayout()
-        trans_x_layout.addWidget(QLabel("X (слева направо):"))
+        trans_x_layout.addWidget(QLabel("X (мировая ось):"))
         self.trans_x_spin = QSpinBox()
         self.trans_x_spin.setRange(-200, 200)
         self.trans_x_spin.setValue(0)
@@ -685,9 +708,9 @@ class MainWindow(QMainWindow):
         trans_x_layout.addWidget(self.trans_x_spin)
         translation_layout.addLayout(trans_x_layout)
         
-        # Перемещение по Y (из глубины экрана)
+        # Перемещение по мировой оси Y
         trans_y_layout = QHBoxLayout()
-        trans_y_layout.addWidget(QLabel("Y (из глубины):"))
+        trans_y_layout.addWidget(QLabel("Y (мировая ось):"))
         self.trans_y_spin = QSpinBox()
         self.trans_y_spin.setRange(-200, 200)
         self.trans_y_spin.setValue(0)
@@ -695,9 +718,9 @@ class MainWindow(QMainWindow):
         trans_y_layout.addWidget(self.trans_y_spin)
         translation_layout.addLayout(trans_y_layout)
         
-        # Перемещение по Z (снизу вверх)
+        # Перемещение по мировой оси Z
         trans_z_layout = QHBoxLayout()
-        trans_z_layout.addWidget(QLabel("Z (снизу вверх):"))
+        trans_z_layout.addWidget(QLabel("Z (мировая ось):"))
         self.trans_z_spin = QSpinBox()
         self.trans_z_spin.setRange(-200, 200)
         self.trans_z_spin.setValue(0)
@@ -708,33 +731,33 @@ class MainWindow(QMainWindow):
         return translation_group
     
     def create_reflection_group(self):
-        # Группа управления отражениями
-        reflection_group = QGroupBox("Отражение")
+        # Группа управления отражениями относительно мировых осей
+        reflection_group = QGroupBox("Отражение относительно мировых осей")
         reflection_layout = QVBoxLayout(reflection_group)
         
         # Кнопки отражения
-        self.reflect_x_btn = QPushButton("Отразить по X")
+        self.reflect_x_btn = QPushButton("Отразить относительно оси X")
         self.reflect_x_btn.clicked.connect(self.reflect_x)
         reflection_layout.addWidget(self.reflect_x_btn)
         
-        self.reflect_y_btn = QPushButton("Отразить по Y")
+        self.reflect_y_btn = QPushButton("Отразить относительно оси Y")
         self.reflect_y_btn.clicked.connect(self.reflect_y)
         reflection_layout.addWidget(self.reflect_y_btn)
         
-        self.reflect_z_btn = QPushButton("Отразить по Z")
+        self.reflect_z_btn = QPushButton("Отразить относительно оси Z")
         self.reflect_z_btn.clicked.connect(self.reflect_z)
         reflection_layout.addWidget(self.reflect_z_btn)
         
         return reflection_group
     
     def create_camera_group(self):
-        # Группа управления камерой
-        camera_group = QGroupBox("Камера")
+        # Группа управления камерой относительно мировых осей
+        camera_group = QGroupBox("Вращение камеры относительно мировых осей")
         camera_layout = QVBoxLayout(camera_group)
         
-        # Вращение камеры по X (вокруг горизонтальной оси)
+        # Вращение камеры вокруг оси X
         cam_x_layout = QHBoxLayout()
-        cam_x_layout.addWidget(QLabel("Вращение X (горизонталь):"))
+        cam_x_layout.addWidget(QLabel("Вращение вокруг X:"))
         self.cam_x_slider = QSlider(Qt.Horizontal)
         self.cam_x_slider.setRange(-90, 90)
         self.cam_x_slider.setValue(0)
@@ -742,9 +765,9 @@ class MainWindow(QMainWindow):
         cam_x_layout.addWidget(self.cam_x_slider)
         camera_layout.addLayout(cam_x_layout)
         
-        # Вращение камеры по Y (вокруг глубинной оси)
+        # Вращение камеры вокруг оси Y
         cam_y_layout = QHBoxLayout()
-        cam_y_layout.addWidget(QLabel("Вращение Y (глубинная):"))
+        cam_y_layout.addWidget(QLabel("Вращение вокруг Y:"))
         self.cam_y_slider = QSlider(Qt.Horizontal)
         self.cam_y_slider.setRange(-90, 90)
         self.cam_y_slider.setValue(0)
@@ -752,9 +775,9 @@ class MainWindow(QMainWindow):
         cam_y_layout.addWidget(self.cam_y_slider)
         camera_layout.addLayout(cam_y_layout)
         
-        # Вращение камеры по Z (вокруг вертикальной оси)
+        # Вращение камеры вокруг оси Z
         cam_z_layout = QHBoxLayout()
-        cam_z_layout.addWidget(QLabel("Вращение Z (вертикаль):"))
+        cam_z_layout.addWidget(QLabel("Вращение вокруг Z:"))
         self.cam_z_slider = QSlider(Qt.Horizontal)
         self.cam_z_slider.setRange(-90, 90)
         self.cam_z_slider.setValue(0)
@@ -762,9 +785,9 @@ class MainWindow(QMainWindow):
         cam_z_layout.addWidget(self.cam_z_slider)
         camera_layout.addLayout(cam_z_layout)
         
-        # Расстояние камеры (теперь по Y)
+        # Расстояние камеры по оси Y в мировых координатах
         cam_dist_layout = QHBoxLayout()
-        cam_dist_layout.addWidget(QLabel("Расстояние (по Y):"))
+        cam_dist_layout.addWidget(QLabel("Расстояние по оси Y:"))
         self.cam_dist_spin = QSpinBox()
         self.cam_dist_spin.setRange(100, 1000)
         self.cam_dist_spin.setValue(500)
@@ -783,6 +806,7 @@ class MainWindow(QMainWindow):
         self.canvas.update()
     
     def update_letter_rotation(self):
+        # Обновляем углы вращения вокруг мировых осей
         self.canvas.letter.rotation.x = self.rot_x_slider.value()
         self.canvas.letter.rotation.y = self.rot_y_slider.value()
         self.canvas.letter.rotation.z = self.rot_z_slider.value()
@@ -790,8 +814,7 @@ class MainWindow(QMainWindow):
         self.canvas.update()
     
     def update_letter_position(self):
-        # Используем стандартную систему координат
-        # Каждый ползунок соответствует своей оси
+        # Обновляем позицию в мировых координатах
         self.canvas.letter.position.x = self.trans_x_spin.value()
         self.canvas.letter.position.y = self.trans_y_spin.value()
         self.canvas.letter.position.z = self.trans_z_spin.value()
@@ -799,7 +822,7 @@ class MainWindow(QMainWindow):
         self.canvas.update()
     
     def update_camera_rotation(self):
-        # Обновляем вращение камеры по всем трем осям
+        # Обновляем вращение камеры вокруг мировых осей
         self.canvas.camera.rotation.x = self.cam_x_slider.value()
         self.canvas.camera.rotation.y = self.cam_y_slider.value()
         self.canvas.camera.rotation.z = self.cam_z_slider.value()
@@ -807,24 +830,27 @@ class MainWindow(QMainWindow):
         self.canvas.update()
     
     def update_camera_position(self):
-        # Обновляем позицию камеры по Y (расстояние)
+        # Обновляем позицию камеры в мировых координатах
         self.canvas.camera.position.y = -self.cam_dist_spin.value()
         self.canvas.camera.update_view_matrix()
         self.canvas.update()
     
     def reflect_x(self):
-        # Применяем отражение по X
+        # Отражение относительно мировой оси X
         self.canvas.letter.flip_x()
+        self.canvas.letter.update_transform()
         self.canvas.update()
     
     def reflect_y(self):
-        # Применяем отражение по Y
+        # Отражение относительно мировой оси Y
         self.canvas.letter.flip_y()
+        self.canvas.letter.update_transform()
         self.canvas.update()
     
     def reflect_z(self):
-        # Применяем отражение по Z
+        # Отражение относительно мировой оси Z
         self.canvas.letter.flip_z()
+        self.canvas.letter.update_transform()
         self.canvas.update()
     
     def auto_scale(self):
