@@ -653,7 +653,7 @@ class MainWindow(QMainWindow):
         auto_scale_button.clicked.connect(self.auto_scale)
         control_layout.addWidget(auto_scale_button)
         
-        # Устанавливаем начальные значения
+        # Устанавливаем начальные значения и обновляем отображение
         self.update_letter_type()
     
     def create_rotation_group(self):
@@ -798,11 +798,49 @@ class MainWindow(QMainWindow):
         return camera_group
     
     def update_letter_type(self):
-        self.canvas.letter.letter_type = self.letter_type_combo.currentText()
+        # При смене типа буквы полностью обновляем геометрию
+        letter_type = self.letter_type_combo.currentText()
+        size = self.size_spin.value()
+        
+        # Создаем новый экземпляр буквы с текущими параметрами
+        new_letter = Letter3D(letter_type, size)
+        
+        # Копируем текущие трансформации
+        new_letter.position = self.canvas.letter.position
+        new_letter.rotation = self.canvas.letter.rotation
+        new_letter.scale_factors = self.canvas.letter.scale_factors
+        new_letter.x_flipped = self.canvas.letter.x_flipped
+        new_letter.y_flipped = self.canvas.letter.y_flipped
+        new_letter.z_flipped = self.canvas.letter.z_flipped
+        
+        # Обновляем трансформацию и заменяем текущую букву
+        new_letter.update_transform()
+        self.canvas.letter = new_letter
+        
+        # Обновляем холст для немедленного отображения изменений
         self.canvas.update()
     
     def update_letter_size(self):
-        self.canvas.letter.resize(self.size_spin.value())
+        # При изменении размера буквы полностью обновляем геометрию
+        letter_type = self.canvas.letter.letter_type
+        size = self.size_spin.value()
+        
+        # Создаем новый экземпляр буквы с текущими параметрами
+        new_letter = Letter3D(letter_type, size)
+        
+        # Копируем текущие трансформации
+        new_letter.position = self.canvas.letter.position
+        new_letter.rotation = self.canvas.letter.rotation
+        new_letter.scale_factors = self.canvas.letter.scale_factors
+        new_letter.x_flipped = self.canvas.letter.x_flipped
+        new_letter.y_flipped = self.canvas.letter.y_flipped
+        new_letter.z_flipped = self.canvas.letter.z_flipped
+        
+        # Обновляем трансформацию и заменяем текущую букву
+        new_letter.update_transform()
+        self.canvas.letter = new_letter
+        
+        # Обновляем холст для немедленного отображения изменений
         self.canvas.update()
     
     def update_letter_rotation(self):
