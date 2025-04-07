@@ -3,7 +3,7 @@ import math
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QSlider, QPushButton, QSpinBox,
-                              QGroupBox, QDoubleSpinBox, QComboBox, QCheckBox)
+                              QGroupBox, QDoubleSpinBox, QComboBox, QCheckBox, QTabWidget)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPen, QColor
 
@@ -561,8 +561,12 @@ class Canvas3D(QWidget):
         palette.setColor(self.backgroundRole(), QColor(0, 0, 0))
         self.setPalette(palette)
         
-        # Инициализируем букву с размерами по умолчанию
-        self.letter = Letter3D('Б', 100, 100, 20)
+        # Инициализируем две буквы с размерами по умолчанию
+        self.letter1 = Letter3D('Б', 100, 100, 20)
+        self.letter1.position.x = -60  # Смещаем первую букву влево
+        
+        self.letter2 = Letter3D('З', 100, 100, 20)
+        self.letter2.position.x = 60   # Смещаем вторую букву вправо
         
         # Инициализируем камеру
         self.camera = Camera()
@@ -583,7 +587,8 @@ class Canvas3D(QWidget):
         # Обновляем матрицы преобразования
         self.camera.update_view_matrix()
         self.camera.update_projection_matrix()
-        self.letter.update_transform()
+        self.letter1.update_transform()
+        self.letter2.update_transform()
     
     def initialize_axes(self):
         """Инициализация осей координат"""
@@ -626,25 +631,34 @@ class Canvas3D(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Получаем текущие матрицы
-        model_matrix = self.letter.transform_matrix
+        # Получаем матрицы преобразований
         view_matrix = self.camera.view_matrix
         projection_matrix = self.camera.projection_matrix
         
         # Отрисовка мировых осей координат (всегда)
         self.draw_world_axes(painter, view_matrix, projection_matrix)
         
+        # Рисуем первую букву
+        self.draw_letter(painter, self.letter1, view_matrix, projection_matrix, QColor(0, 255, 0))
+        
+        # Рисуем вторую букву
+        self.draw_letter(painter, self.letter2, view_matrix, projection_matrix, QColor(255, 255, 0))
+    
+    def draw_letter(self, painter, letter, view_matrix, projection_matrix, color):
         # Настройка пера для рисования буквы
-        painter.setPen(QPen(QColor(0, 255, 0), 2))
+        painter.setPen(QPen(color, 2))
+        
+        # Получаем модельную матрицу для буквы
+        model_matrix = letter.transform_matrix
         
         # Проецируем вершины буквы
         screen_vertices = []
-        for vertex in self.letter.vertices:
+        for vertex in letter.vertices:
             screen_vertex = self.renderer.project_vertex(vertex, model_matrix, view_matrix, projection_matrix)
             screen_vertices.append(screen_vertex)
         
         # Рисуем ребра буквы
-        for edge in self.letter.edges:
+        for edge in letter.edges:
             start = screen_vertices[edge[0]]
             end = screen_vertices[edge[1]]
             painter.drawLine(start[0], start[1], end[0], end[1])
@@ -677,7 +691,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         self.setWindowTitle("3D Буквы Б и З - Лабораторная работа №2")
-        self.resize(800, 600)
+        self.resize(1000, 700)
         
         # Создаем центральный виджет и его компоновку
         central_widget = QWidget()
@@ -688,144 +702,167 @@ class MainWindow(QMainWindow):
         self.canvas = Canvas3D()
         main_layout.addWidget(self.canvas, 2)
         
-        # Создаем панель управления
-        control_panel = self.create_control_panel()
-        main_layout.addWidget(control_panel, 1)
+        # Создаем вкладки для управления обеими буквами
+        tabs = QTabWidget()
+        main_layout.addWidget(tabs, 1)
         
-        # Устанавливаем начальные значения и обновляем отображение
-        self.update_letter_type()
+        # Создаем панели управления для каждой буквы
+        letter1_panel = self.create_letter_panel(1)
+        letter2_panel = self.create_letter_panel(2)
+        
+        # Добавляем панели управления на вкладки
+        tabs.addTab(letter1_panel, "Буква Б")
+        tabs.addTab(letter2_panel, "Буква З")
+        
+        # Создаем панель управления камерой
+        camera_panel = self.create_camera_panel()
+        main_layout.addWidget(camera_panel, 1)
     
-    def create_control_panel(self):
-        # Создаем панель управления
-        control_panel = QWidget()
-        control_layout = QVBoxLayout(control_panel)
+    def create_letter_panel(self, letter_index):
+        """Создает панель управления для указанной буквы"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        
+        # Определяем, с какой буквой работаем
+        letter_attr = f"letter{letter_index}"
+        letter_obj = getattr(self.canvas, letter_attr)
+        letter_type = letter_obj.letter_type
         
         # Группа для параметров буквы
-        letter_group = QGroupBox("Параметры буквы")
+        letter_group = QGroupBox(f"Параметры буквы {letter_type}")
         letter_layout = QVBoxLayout(letter_group)
         
-        # Выбор типа буквы
-        type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("Буква:"))
-        self.letter_combo = QComboBox()
-        self.letter_combo.addItems(["Б", "З"])
-        self.letter_combo.currentTextChanged.connect(self.update_letter_type)
-        type_layout.addWidget(self.letter_combo)
-        letter_layout.addLayout(type_layout)
-        
-        # Размер буквы
+        # Размеры буквы
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("Ширина:"))
-        self.width_spin = QSpinBox()
-        self.width_spin.setRange(10, 300)
-        self.width_spin.setValue(100)
-        self.width_spin.valueChanged.connect(self.update_letter_size)
-        size_layout.addWidget(self.width_spin)
+        width_spin = QSpinBox()
+        width_spin.setRange(10, 300)
+        width_spin.setValue(letter_obj.width)
+        width_spin.valueChanged.connect(lambda value: self.update_letter_size(letter_index, "width", value))
+        size_layout.addWidget(width_spin)
         letter_layout.addLayout(size_layout)
         
         height_layout = QHBoxLayout()
         height_layout.addWidget(QLabel("Высота:"))
-        self.height_spin = QSpinBox()
-        self.height_spin.setRange(10, 300)
-        self.height_spin.setValue(100)
-        self.height_spin.valueChanged.connect(self.update_letter_size)
-        height_layout.addWidget(self.height_spin)
+        height_spin = QSpinBox()
+        height_spin.setRange(10, 300)
+        height_spin.setValue(letter_obj.height)
+        height_spin.valueChanged.connect(lambda value: self.update_letter_size(letter_index, "height", value))
+        height_layout.addWidget(height_spin)
         letter_layout.addLayout(height_layout)
         
         depth_layout = QHBoxLayout()
         depth_layout.addWidget(QLabel("Глубина:"))
-        self.depth_spin = QSpinBox()
-        self.depth_spin.setRange(5, 100)
-        self.depth_spin.setValue(20)
-        self.depth_spin.valueChanged.connect(self.update_letter_size)
-        depth_layout.addWidget(self.depth_spin)
+        depth_spin = QSpinBox()
+        depth_spin.setRange(5, 100)
+        depth_spin.setValue(letter_obj.depth)
+        depth_spin.valueChanged.connect(lambda value: self.update_letter_size(letter_index, "depth", value))
+        depth_layout.addWidget(depth_spin)
         letter_layout.addLayout(depth_layout)
         
         # Кнопка автомасштабирования
-        self.auto_scale_btn = QPushButton("Авто-масштабирование")
-        self.auto_scale_btn.clicked.connect(self.auto_scale)
-        letter_layout.addWidget(self.auto_scale_btn)
+        auto_scale_btn = QPushButton("Авто-масштабирование")
+        auto_scale_btn.clicked.connect(lambda: self.auto_scale(letter_index))
+        letter_layout.addWidget(auto_scale_btn)
         
-        control_layout.addWidget(letter_group)
+        layout.addWidget(letter_group)
         
         # Группа для вращения
         rotation_group = QGroupBox("Вращение")
         rotation_layout = QVBoxLayout(rotation_group)
         
         # X-вращение
-        self.x_rot_slider = QSlider(Qt.Horizontal)
-        self.x_rot_slider.setRange(0, 360)
-        self.x_rot_slider.setValue(0)
-        self.x_rot_slider.valueChanged.connect(self.rotate_x)
         rotation_layout.addWidget(QLabel("Вокруг оси X:"))
-        rotation_layout.addWidget(self.x_rot_slider)
+        x_rot_slider = QSlider(Qt.Horizontal)
+        x_rot_slider.setRange(0, 360)
+        x_rot_slider.setValue(int(letter_obj.rotation.x))
+        x_rot_slider.valueChanged.connect(lambda value: self.rotate_letter(letter_index, "x", value))
+        setattr(self, f"x_rot_slider_{letter_index}", x_rot_slider)
+        rotation_layout.addWidget(x_rot_slider)
         
         # Y-вращение
-        self.y_rot_slider = QSlider(Qt.Horizontal)
-        self.y_rot_slider.setRange(0, 360)
-        self.y_rot_slider.setValue(0)
-        self.y_rot_slider.valueChanged.connect(self.rotate_y)
         rotation_layout.addWidget(QLabel("Вокруг оси Y:"))
-        rotation_layout.addWidget(self.y_rot_slider)
+        y_rot_slider = QSlider(Qt.Horizontal)
+        y_rot_slider.setRange(0, 360)
+        y_rot_slider.setValue(int(letter_obj.rotation.y))
+        y_rot_slider.valueChanged.connect(lambda value: self.rotate_letter(letter_index, "y", value))
+        setattr(self, f"y_rot_slider_{letter_index}", y_rot_slider)
+        rotation_layout.addWidget(y_rot_slider)
         
         # Z-вращение
-        self.z_rot_slider = QSlider(Qt.Horizontal)
-        self.z_rot_slider.setRange(0, 360)
-        self.z_rot_slider.setValue(0)
-        self.z_rot_slider.valueChanged.connect(self.rotate_z)
         rotation_layout.addWidget(QLabel("Вокруг оси Z:"))
-        rotation_layout.addWidget(self.z_rot_slider)
+        z_rot_slider = QSlider(Qt.Horizontal)
+        z_rot_slider.setRange(0, 360)
+        z_rot_slider.setValue(int(letter_obj.rotation.z))
+        z_rot_slider.valueChanged.connect(lambda value: self.rotate_letter(letter_index, "z", value))
+        setattr(self, f"z_rot_slider_{letter_index}", z_rot_slider)
+        rotation_layout.addWidget(z_rot_slider)
         
-        control_layout.addWidget(rotation_group)
+        layout.addWidget(rotation_group)
         
         # Группа для перемещения
         translation_group = QGroupBox("Перемещение")
         translation_layout = QVBoxLayout(translation_group)
         
         # X-перемещение
-        self.x_trans_slider = QSlider(Qt.Horizontal)
-        self.x_trans_slider.setRange(-200, 200)
-        self.x_trans_slider.setValue(0)
-        self.x_trans_slider.valueChanged.connect(self.translate_x)
         translation_layout.addWidget(QLabel("По оси X:"))
-        translation_layout.addWidget(self.x_trans_slider)
+        x_trans_slider = QSlider(Qt.Horizontal)
+        x_trans_slider.setRange(-200, 200)
+        x_trans_slider.setValue(int(letter_obj.position.x))
+        x_trans_slider.valueChanged.connect(lambda value: self.translate_letter(letter_index, "x", value))
+        setattr(self, f"x_trans_slider_{letter_index}", x_trans_slider)
+        translation_layout.addWidget(x_trans_slider)
         
         # Y-перемещение
-        self.y_trans_slider = QSlider(Qt.Horizontal)
-        self.y_trans_slider.setRange(-200, 200)
-        self.y_trans_slider.setValue(0)
-        self.y_trans_slider.valueChanged.connect(self.translate_y)
         translation_layout.addWidget(QLabel("По оси Y:"))
-        translation_layout.addWidget(self.y_trans_slider)
+        y_trans_slider = QSlider(Qt.Horizontal)
+        y_trans_slider.setRange(-200, 200)
+        y_trans_slider.setValue(int(letter_obj.position.y))
+        y_trans_slider.valueChanged.connect(lambda value: self.translate_letter(letter_index, "y", value))
+        setattr(self, f"y_trans_slider_{letter_index}", y_trans_slider)
+        translation_layout.addWidget(y_trans_slider)
         
         # Z-перемещение
-        self.z_trans_slider = QSlider(Qt.Horizontal)
-        self.z_trans_slider.setRange(-200, 200)
-        self.z_trans_slider.setValue(0)
-        self.z_trans_slider.valueChanged.connect(self.translate_z)
         translation_layout.addWidget(QLabel("По оси Z:"))
-        translation_layout.addWidget(self.z_trans_slider)
+        z_trans_slider = QSlider(Qt.Horizontal)
+        z_trans_slider.setRange(-200, 200)
+        z_trans_slider.setValue(int(letter_obj.position.z))
+        z_trans_slider.valueChanged.connect(lambda value: self.translate_letter(letter_index, "z", value))
+        setattr(self, f"z_trans_slider_{letter_index}", z_trans_slider)
+        translation_layout.addWidget(z_trans_slider)
         
-        control_layout.addWidget(translation_group)
+        layout.addWidget(translation_group)
         
         # Группа для отражения
         reflection_group = QGroupBox("Отражение")
         reflection_layout = QVBoxLayout(reflection_group)
         
         # Кнопки отражения
-        self.flip_x_btn = QPushButton("Отразить по X")
-        self.flip_x_btn.clicked.connect(self.flip_x)
-        reflection_layout.addWidget(self.flip_x_btn)
+        flip_x_btn = QPushButton("Отразить по X")
+        flip_x_btn.clicked.connect(lambda: self.flip_letter(letter_index, "x"))
+        reflection_layout.addWidget(flip_x_btn)
         
-        self.flip_y_btn = QPushButton("Отразить по Y")
-        self.flip_y_btn.clicked.connect(self.flip_y)
-        reflection_layout.addWidget(self.flip_y_btn)
+        flip_y_btn = QPushButton("Отразить по Y")
+        flip_y_btn.clicked.connect(lambda: self.flip_letter(letter_index, "y"))
+        reflection_layout.addWidget(flip_y_btn)
         
-        self.flip_z_btn = QPushButton("Отразить по Z")
-        self.flip_z_btn.clicked.connect(self.flip_z)
-        reflection_layout.addWidget(self.flip_z_btn)
+        flip_z_btn = QPushButton("Отразить по Z")
+        flip_z_btn.clicked.connect(lambda: self.flip_letter(letter_index, "z"))
+        reflection_layout.addWidget(flip_z_btn)
         
-        control_layout.addWidget(reflection_group)
+        layout.addWidget(reflection_group)
+        
+        # Сохраняем спинбоксы размеров для обновления во время авто-масштабирования
+        setattr(self, f"width_spin_{letter_index}", width_spin)
+        setattr(self, f"height_spin_{letter_index}", height_spin)
+        setattr(self, f"depth_spin_{letter_index}", depth_spin)
+        
+        return panel
+    
+    def create_camera_panel(self):
+        """Создает панель управления камерой"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
         
         # Группа для камеры
         camera_group = QGroupBox("Камера")
@@ -863,8 +900,8 @@ class MainWindow(QMainWindow):
         self.cam_dist_slider.valueChanged.connect(self.change_camera_distance)
         camera_layout.addWidget(self.cam_dist_slider)
         
-        # Масштаб
-        camera_layout.addWidget(QLabel("Масштаб:"))
+        # Масштаб обеих букв
+        camera_layout.addWidget(QLabel("Масштаб (обе буквы):"))
         self.scale_slider = QSlider(Qt.Horizontal)
         self.scale_slider.setRange(50, 300)
         self.scale_slider.setValue(100)
@@ -879,122 +916,77 @@ class MainWindow(QMainWindow):
         self.axes_length_slider.valueChanged.connect(self.change_axes_length)
         camera_layout.addWidget(self.axes_length_slider)
         
-        control_layout.addWidget(camera_group)
+        layout.addWidget(camera_group)
         
-        return control_panel
+        return panel
     
-    def update_letter_type(self):
-        # При смене типа буквы полностью обновляем геометрию
-        letter_type = self.letter_combo.currentText()
-        width = self.width_spin.value()
-        height = self.height_spin.value()
-        depth = self.depth_spin.value()
+    def update_letter_size(self, letter_index, dimension, value):
+        """Обновляет размер указанной буквы"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
         
-        # Создаем новый экземпляр буквы с текущими параметрами
-        new_letter = Letter3D(letter_type, width, height, depth)
+        # Обновляем указанное измерение
+        setattr(letter, dimension, value)
+        
+        # Создаем новую букву с обновленными размерами
+        new_letter = Letter3D(letter.letter_type, letter.width, letter.height, letter.depth)
         
         # Копируем текущие трансформации
-        new_letter.position = self.canvas.letter.position
-        new_letter.rotation = self.canvas.letter.rotation
-        new_letter.scale_factors = self.canvas.letter.scale_factors
-        new_letter.x_flipped = self.canvas.letter.x_flipped
-        new_letter.y_flipped = self.canvas.letter.y_flipped
-        new_letter.z_flipped = self.canvas.letter.z_flipped
+        new_letter.position = letter.position
+        new_letter.rotation = letter.rotation
+        new_letter.scale_factors = letter.scale_factors
+        new_letter.x_flipped = letter.x_flipped
+        new_letter.y_flipped = letter.y_flipped
+        new_letter.z_flipped = letter.z_flipped
         
         # Обновляем трансформацию и заменяем текущую букву
         new_letter.update_transform()
-        self.canvas.letter = new_letter
+        setattr(self.canvas, f"letter{letter_index}", new_letter)
         
-        # Обновляем холст для немедленного отображения изменений
+        # Обновляем холст
         self.canvas.update()
     
-    def update_letter_size(self):
-        # При изменении размера буквы полностью обновляем геометрию
-        letter_type = self.canvas.letter.letter_type
-        width = self.width_spin.value()
-        height = self.height_spin.value()
-        depth = self.depth_spin.value()
+    def rotate_letter(self, letter_index, axis, value):
+        """Вращает указанную букву вокруг указанной оси"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        setattr(letter.rotation, axis, value)
+        letter.update_transform()
+        self.canvas.update()
+    
+    def translate_letter(self, letter_index, axis, value):
+        """Перемещает указанную букву по указанной оси"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        setattr(letter.position, axis, value)
+        letter.update_transform()
+        self.canvas.update()
+    
+    def flip_letter(self, letter_index, axis):
+        """Отражает указанную букву относительно указанной оси"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        if axis == "x":
+            letter.flip_x()
+        elif axis == "y":
+            letter.flip_y()
+        elif axis == "z":
+            letter.flip_z()
+        letter.update_transform()
+        self.canvas.update()
+    
+    def auto_scale(self, letter_index):
+        """Автоматически масштабирует указанную букву"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        canvas_size = min(self.canvas.width(), self.canvas.height())
+        max_dim = max(letter.width, letter.height, letter.depth)
+        scale_factor = canvas_size / max_dim / 8  # Делим на 8 для двух букв
         
-        # Создаем новый экземпляр буквы с текущими параметрами
-        new_letter = Letter3D(letter_type, width, height, depth)
+        # Обновляем размеры с сохранением пропорций
+        new_width = int(letter.width * scale_factor)
+        new_height = int(letter.height * scale_factor)
+        new_depth = int(letter.depth * scale_factor)
         
-        # Копируем текущие трансформации
-        new_letter.position = self.canvas.letter.position
-        new_letter.rotation = self.canvas.letter.rotation
-        new_letter.scale_factors = self.canvas.letter.scale_factors
-        new_letter.x_flipped = self.canvas.letter.x_flipped
-        new_letter.y_flipped = self.canvas.letter.y_flipped
-        new_letter.z_flipped = self.canvas.letter.z_flipped
-        
-        # Обновляем трансформацию и заменяем текущую букву
-        new_letter.update_transform()
-        self.canvas.letter = new_letter
-        
-        # Обновляем холст для немедленного отображения изменений
-        self.canvas.update()
-    
-    def rotate_x(self):
-        # Обновляем угол вращения вокруг оси X
-        self.canvas.letter.rotation.x = self.x_rot_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def rotate_y(self):
-        # Обновляем угол вращения вокруг оси Y
-        self.canvas.letter.rotation.y = self.y_rot_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def rotate_z(self):
-        # Обновляем угол вращения вокруг оси Z
-        self.canvas.letter.rotation.z = self.z_rot_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def translate_x(self):
-        # Обновляем смещение по оси X
-        self.canvas.letter.position.x = self.x_trans_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def translate_y(self):
-        # Обновляем смещение по оси Y
-        self.canvas.letter.position.y = self.y_trans_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def translate_z(self):
-        # Обновляем смещение по оси Z
-        self.canvas.letter.position.z = self.z_trans_slider.value()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def flip_x(self):
-        # Отражение относительно оси X
-        self.canvas.letter.flip_x()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def flip_y(self):
-        # Отражение относительно оси Y
-        self.canvas.letter.flip_y()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def flip_z(self):
-        # Отражение относительно оси Z
-        self.canvas.letter.flip_z()
-        self.canvas.letter.update_transform()
-        self.canvas.update()
-    
-    def change_scale(self):
-        # Обновляем масштаб
-        scale_factor = self.scale_slider.value() / 100
-        self.canvas.letter.scale_factors.x = scale_factor
-        self.canvas.letter.scale_factors.y = scale_factor
-        self.canvas.letter.scale_factors.z = scale_factor
-        self.canvas.letter.update_transform()
-        self.canvas.update()
+        # Обновляем значения спинбоксов
+        getattr(self, f"width_spin_{letter_index}").setValue(new_width)
+        getattr(self, f"height_spin_{letter_index}").setValue(new_height)
+        getattr(self, f"depth_spin_{letter_index}").setValue(new_depth)
     
     def rotate_camera_x(self):
         # Обновляем вращение камеры вокруг оси X
@@ -1020,21 +1012,23 @@ class MainWindow(QMainWindow):
         self.canvas.camera.update_view_matrix()
         self.canvas.update()
     
-    def auto_scale(self):
-        # Автомасштабирование объекта в области рисования
-        canvas_size = min(self.canvas.width(), self.canvas.height())
-        max_dim = max(self.canvas.letter.width, self.canvas.letter.height, self.canvas.letter.depth)
-        scale_factor = canvas_size / max_dim / 4
+    def change_scale(self):
+        # Обновляем масштаб обеих букв
+        scale_factor = self.scale_slider.value() / 100
         
-        # Обновляем размеры с сохранением пропорций
-        new_width = int(self.canvas.letter.width * scale_factor)
-        new_height = int(self.canvas.letter.height * scale_factor)
-        new_depth = int(self.canvas.letter.depth * scale_factor)
+        # Обновляем масштаб для первой буквы
+        self.canvas.letter1.scale_factors.x = scale_factor
+        self.canvas.letter1.scale_factors.y = scale_factor
+        self.canvas.letter1.scale_factors.z = scale_factor
+        self.canvas.letter1.update_transform()
         
-        # Обновляем значения спинбоксов
-        self.width_spin.setValue(new_width)
-        self.height_spin.setValue(new_height)
-        self.depth_spin.setValue(new_depth)
+        # Обновляем масштаб для второй буквы
+        self.canvas.letter2.scale_factors.x = scale_factor
+        self.canvas.letter2.scale_factors.y = scale_factor
+        self.canvas.letter2.scale_factors.z = scale_factor
+        self.canvas.letter2.update_transform()
+        
+        self.canvas.update()
     
     def change_axes_length(self):
         # Изменение длины осей координат
