@@ -419,40 +419,33 @@ class Letter3D:
     
     def update_transform(self):
         # Создаем матрицы трансформации
-        # В этой версии все трансформации применяются относительно мировых координат,
-        # а не относительно осей объекта
-        
-        # Начинаем с единичной матрицы
         self.transform_matrix = Matrix4x4.identity()
         
-        # 1. Сначала применяем масштабирование (относительно начала координат)
-        scale_matrix = Matrix4x4.scale(self.scale_factors.x, self.scale_factors.y, self.scale_factors.z)
-        self.transform_matrix = self.transform_matrix @ scale_matrix
+        # Порядок применения трансформаций для вращения относительно мировых координат:
+        # 1. Применяем перемещение
+        translation_matrix = Matrix4x4.translate(self.position.x, self.position.y, self.position.z)
         
-        # 2. Применяем отражения относительно мировых осей
-        if self.x_flipped:
-            reflection_x = Matrix4x4.reflection_x()
-            self.transform_matrix = self.transform_matrix @ reflection_x
-        
-        if self.y_flipped:
-            reflection_y = Matrix4x4.reflection_y()
-            self.transform_matrix = self.transform_matrix @ reflection_y
-        
-        if self.z_flipped:
-            reflection_z = Matrix4x4.reflection_z()
-            self.transform_matrix = self.transform_matrix @ reflection_z
-        
-        # 3. Применяем вращения относительно мировых осей
+        # 2. Применяем вращения относительно мировых осей
         rotation_x = Matrix4x4.rotation_around_x(self.rotation.x)
         rotation_y = Matrix4x4.rotation_around_y(self.rotation.y)
         rotation_z = Matrix4x4.rotation_around_z(self.rotation.z)
         
-        # Порядок важен! Сначала Z, потом Y, потом X
-        self.transform_matrix = self.transform_matrix @ rotation_z @ rotation_y @ rotation_x
+        # 3. Применяем отражения
+        reflection_matrix = Matrix4x4.identity()
+        if self.x_flipped:
+            reflection_matrix = reflection_matrix @ Matrix4x4.reflection_x()
+        if self.y_flipped:
+            reflection_matrix = reflection_matrix @ Matrix4x4.reflection_y()
+        if self.z_flipped:
+            reflection_matrix = reflection_matrix @ Matrix4x4.reflection_z()
         
-        # 4. И наконец применяем перемещение
-        translation_matrix = Matrix4x4.translate(self.position.x, self.position.y, self.position.z)
-        self.transform_matrix = self.transform_matrix @ translation_matrix
+        # 4. Применяем масштабирование
+        scale_matrix = Matrix4x4.scale(self.scale_factors.x, self.scale_factors.y, self.scale_factors.z)
+        
+        # Объединяем все трансформации в правильном порядке
+        # Для вращения относительно мировых координат сначала применяем масштабирование и отражение к объекту,
+        # затем вращаем относительно мировых осей, и в конце перемещаем
+        self.transform_matrix = translation_matrix @ rotation_z @ rotation_y @ rotation_x @ reflection_matrix @ scale_matrix
     
     def flip_x(self):
         self.x_flipped = not self.x_flipped
