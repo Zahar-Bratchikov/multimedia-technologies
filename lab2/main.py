@@ -19,6 +19,47 @@ class Vector3D:
     def __sub__(self, other):
         return Vector3D(self.x - other.x, self.y - other.y, self.z - other.z)
 
+class Triangle:
+    def __init__(self, v1, v2, v3, color=None):
+        self.vertices = [v1, v2, v3]
+        self.color = color
+    
+    def transform(self, matrix):
+        result = Triangle(Vector3D(), Vector3D(), Vector3D(), self.color)
+        for i in range(3):
+            v_homo = np.array([self.vertices[i].x, self.vertices[i].y, self.vertices[i].z, 1.0], dtype=np.float64)
+            v_transformed = matrix @ v_homo
+            if abs(v_transformed[3]) > 1e-6:
+                v_transformed = v_transformed / v_transformed[3]
+            result.vertices[i] = Vector3D(v_transformed[0], v_transformed[1], v_transformed[2])
+        return result
+    
+    def calculate_normal(self):
+        """Вычисляет нормаль к треугольнику (для определения видимости)"""
+        v1 = self.vertices[0]
+        v2 = self.vertices[1]
+        v3 = self.vertices[2]
+        
+        # Вычисляем векторы сторон треугольника
+        vector1 = Vector3D(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z)
+        vector2 = Vector3D(v3.x - v1.x, v3.y - v1.y, v3.z - v1.z)
+        
+        # Вычисляем векторное произведение для нормали
+        normal = Vector3D(
+            vector1.y * vector2.z - vector1.z * vector2.y,
+            vector1.z * vector2.x - vector1.x * vector2.z,
+            vector1.x * vector2.y - vector1.y * vector2.x
+        )
+        
+        # Нормализуем вектор
+        length = math.sqrt(normal.x**2 + normal.y**2 + normal.z**2)
+        if length > 1e-6:  # Избегаем деления на ноль
+            normal.x /= length
+            normal.y /= length
+            normal.z /= length
+            
+        return normal
+
 class Matrix4x4:
     @staticmethod
     def identity():
