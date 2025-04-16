@@ -696,6 +696,16 @@ class Canvas3D(QWidget):
             start = screen_vertices[edge[0]]
             end = screen_vertices[edge[1]]
             painter.drawLine(start[0], start[1], end[0], end[1])
+            
+        # Отрисовка центра локальных координат (точки вращения)
+        # Создаем точку в начале координат объекта
+        origin_point = Vector3D(0, 0, 0)
+        screen_origin = self.renderer.project_vertex(origin_point, model_matrix, view_matrix, projection_matrix)
+        
+        # Рисуем точку как маленький круг
+        painter.setBrush(QColor(255, 255, 255))  # Белый цвет для точки
+        painter.setPen(QPen(Qt.white, 1))
+        painter.drawEllipse(screen_origin[0] - 3, screen_origin[1] - 3, 6, 6)
     
     def draw_world_axes(self, painter, view_matrix, projection_matrix):
         # Используем единичную матрицу для модельных преобразований

@@ -90,7 +90,7 @@ class Face:
     def __init__(self, vertices, color=(200, 200, 200)):
         self.vertices = vertices  # Индексы вершин
         self.color = color  # Цвет грани RGB
-        self.normal = None  # Нормаль к грани
+        self.normal = Vector3D(0, 0, 1)  # Нормаль к грани, по умолчанию смотрит вперед
     
     def calculate_normal(self, vertices):
         """Вычисляет нормаль к грани"""
@@ -102,11 +102,24 @@ class Face:
             v1 = Vector3D.from_points(p1, p2)
             v2 = Vector3D.from_points(p1, p3)
             
-            self.normal = v1.cross(v2)
-            self.normal.normalize()
+            normal = v1.cross(v2)
             
-            return self.normal
-        return Vector3D(0, 0, 1)
+            # Нормализуем только если длина не равна нулю
+            length = normal.length()
+            if length > 0:
+                normal.x /= length
+                normal.y /= length
+                normal.z /= length
+                self.normal = normal
+            else:
+                # Если нормаль нулевой длины (вырожденный треугольник),
+                # устанавливаем стандартную нормаль
+                self.normal = Vector3D(0, 0, 1)
+        else:
+            # Если граней меньше 3, используем стандартную нормаль
+            self.normal = Vector3D(0, 0, 1)
+        
+        return self.normal
     
     def get_center(self, vertices):
         """Вычисляет центр грани"""
@@ -194,6 +207,7 @@ class Light:
         self.position = position or Point3D(5, 5, 5)
         self.color = color
         self.intensity = intensity
+        self.ambient_intensity = 0.2  # Интенсивность фонового освещения
     
     def set_position(self, position):
         """Устанавливает позицию источника света"""
@@ -201,30 +215,45 @@ class Light:
     
     def calculate_lighting(self, point, normal, camera_pos, material):
         """Вычисляет освещение для точки"""
+        # Вектор направления света (от точки к источнику света)
         light_dir = Vector3D.from_points(point, self.position).normalize()
+        
+        # Вектор направления взгляда (от точки к камере)
         view_dir = Vector3D.from_points(point, camera_pos).normalize()
         
+        # Фоновое освещение (ambient)
+        r_ambient = int(material.ambient[0] * self.ambient_intensity)
+        g_ambient = int(material.ambient[1] * self.ambient_intensity)
+        b_ambient = int(material.ambient[2] * self.ambient_intensity)
+        
         # Рассеянный свет (диффузное освещение)
-        diffuse_intensity = max(0, normal.dot(light_dir)) * self.intensity
+        # Косинус угла между нормалью и направлением света
+        diffuse_factor = max(0, normal.dot(light_dir))
+        diffuse_intensity = diffuse_factor * self.intensity
+        
+        r_diffuse = int(material.diffuse[0] * diffuse_intensity * self.color[0] / 255)
+        g_diffuse = int(material.diffuse[1] * diffuse_intensity * self.color[1] / 255)
+        b_diffuse = int(material.diffuse[2] * diffuse_intensity * self.color[2] / 255)
         
         # Зеркальный свет (по Фонгу)
-        # Используем новый метод reflect для получения отраженного вектора
-        # Инвертируем light_dir, так как для отражения нужен входящий вектор
+        # Вектор отражения (reflection vector)
+        # Инвертируем light_dir для правильного расчёта отражения
         inverted_light_dir = Vector3D(-light_dir.x, -light_dir.y, -light_dir.z)
         reflect_dir = inverted_light_dir.reflect(normal).normalize()
         
-        specular_intensity = pow(max(0, reflect_dir.dot(view_dir)), material.shininess) * self.intensity
+        # Косинус угла между вектором отражения и направлением взгляда
+        # Возводим в степень для контроля размера блика
+        specular_factor = max(0, reflect_dir.dot(view_dir))
+        specular_intensity = pow(specular_factor, material.shininess) * self.intensity
         
-        # Окончательный цвет
-        r = min(255, int(material.ambient[0] + 
-                         material.diffuse[0] * diffuse_intensity * self.color[0] / 255 +
-                         material.specular[0] * specular_intensity * self.color[0] / 255))
-        g = min(255, int(material.ambient[1] + 
-                         material.diffuse[1] * diffuse_intensity * self.color[1] / 255 +
-                         material.specular[1] * specular_intensity * self.color[1] / 255))
-        b = min(255, int(material.ambient[2] + 
-                         material.diffuse[2] * diffuse_intensity * self.color[2] / 255 +
-                         material.specular[2] * specular_intensity * self.color[2] / 255))
+        r_specular = int(material.specular[0] * specular_intensity * self.color[0] / 255)
+        g_specular = int(material.specular[1] * specular_intensity * self.color[1] / 255)
+        b_specular = int(material.specular[2] * specular_intensity * self.color[2] / 255)
+        
+        # Суммируем все компоненты освещения с ограничением до 255
+        r = min(255, r_ambient + r_diffuse + r_specular)
+        g = min(255, g_ambient + g_diffuse + g_specular)
+        b = min(255, b_ambient + b_diffuse + b_specular)
         
         return (r, g, b)
 
@@ -249,11 +278,12 @@ class Object3D:
         self.rotation_x = 0
         self.rotation_y = 0
         self.rotation_z = 0
-        self.material = Material()
         
-        # Кэширование преобразованных вершин
-        self.transformed_vertices = []
-        self.vertex_normals = []
+        # Добавление свойств для освещения
+        self.vertex_normals = []  # Нормали вершин
+        self.material = Material()  # Материал объекта по умолчанию
+        self.transformed_vertices = []  # Преобразованные вершины
+        self.scale_factors = (1.0, 1.0, 1.0)  # Масштабирование по осям
     
     def set_position(self, position):
         """Устанавливает позицию объекта"""
@@ -318,62 +348,86 @@ class Object3D:
         return np.matmul(translation, rotation)
     
     def transform_vertices(self, view_matrix, projection_matrix, width, height):
-        """Преобразует вершины объекта из мировых координат в экранные"""
-        self.transformed_vertices = []
-        model_matrix = self.get_model_matrix()
-        
-        for vertex in self.vertices:
-            # Преобразование в однородные координаты
-            v = vertex.to_array()
+        """Преобразует вершины объекта с применением матриц трансформации"""
+        # Перед преобразованием вершин вычисляем нормали для граней и вершин
+        try:
+            # Получаем матрицу модели
+            model_matrix = self.get_model_matrix()
             
-            # Применение модельной матрицы
-            v = np.matmul(model_matrix, v)
+            # Для преобразования нормалей нам нужна инвертированная транспонированная матрица модели
+            normal_matrix = np.linalg.inv(model_matrix[:3, :3]).T
             
-            # Применение матрицы вида
-            v = np.matmul(view_matrix, v)
+            # Рассчитываем нормали для граней и вершин, если их еще нет
+            self.calculate_vertex_normals()
             
-            # Применение матрицы проекции
-            v = np.matmul(projection_matrix, v)
+            # Очищаем массив преобразованных вершин
+            self.transformed_vertices = []
             
-            # Нормализация координат
-            if v[3] != 0:
-                v = v / v[3]
-            
-            # Преобразование в экранные координаты
-            x = int((v[0] + 1) * width / 2)
-            y = int((1 - v[1]) * height / 2)
-            z = v[2]  # Z-буфер
-            
-            self.transformed_vertices.append((x, y, z))
-        
-        # Вычисление нормалей к вершинам (для освещения)
-        self.calculate_vertex_normals()
+            # Преобразуем каждую вершину
+            for vertex in self.vertices:
+                # Конвертация в однородные координаты
+                vertex_array = vertex.to_array()
+                
+                # Применяем модельную матрицу
+                vertex_array = np.matmul(model_matrix, vertex_array)
+                
+                # Применяем матрицу вида
+                vertex_array = np.matmul(view_matrix, vertex_array)
+                
+                # Применяем матрицу проекции
+                vertex_array = np.matmul(projection_matrix, vertex_array)
+                
+                # Перспективное деление (w-нормализация)
+                if vertex_array[3] != 0:
+                    vertex_array = vertex_array / vertex_array[3]
+                    
+                # Преобразование в экранные координаты
+                screen_x = int((vertex_array[0] + 1) * width / 2)
+                screen_y = int((1 - vertex_array[1]) * height / 2)
+                screen_z = vertex_array[2]  # Для z-буфера
+                
+                # Сохраняем преобразованную вершину
+                self.transformed_vertices.append([screen_x, screen_y, screen_z])
+                
+            return self.transformed_vertices
+        except Exception as e:
+            print(f"Ошибка при преобразовании вершин: {e}")
+            # Возвращаем пустой список в случае ошибки
+            self.transformed_vertices = []
+            return self.transformed_vertices
     
     def calculate_vertex_normals(self):
-        """Вычисляет нормали к вершинам для сглаженного освещения"""
-        # Инициализация массива нормалей вершин
-        self.vertex_normals = [Vector3D(0, 0, 0) for _ in range(len(self.vertices))]
-        
-        # Для каждой грани
+        """Вычисляет нормали вершин для освещения"""
+        # Сначала вычисляем нормали для всех граней
         for face in self.faces:
-            # Вычисляем нормаль к грани
-            normal = face.calculate_normal(self.vertices)
-            
-            # Проверка наличия нормали и атрибута vertices у грани
-            if normal is None or not hasattr(face, 'vertices'):
-                continue
-            
-            # Добавляем нормаль к каждой вершине грани
+            face.calculate_normal(self.vertices)
+        
+        # Создаем список нормалей для каждой вершины
+        vertex_count = len(self.vertices)
+        self.vertex_normals = [Vector3D(0, 0, 0) for _ in range(vertex_count)]
+        
+        # Для каждой грани добавляем ее нормаль к каждой вершине
+        for face in self.faces:
             for vertex_idx in face.vertices:
-                # Проверка корректности индекса вершины
-                if 0 <= vertex_idx < len(self.vertex_normals):
-                    self.vertex_normals[vertex_idx].x += normal.x
-                    self.vertex_normals[vertex_idx].y += normal.y
-                    self.vertex_normals[vertex_idx].z += normal.z
+                # Проверяем, что индекс вершины в допустимом диапазоне
+                if 0 <= vertex_idx < vertex_count:
+                    # Накапливаем нормали от всех граней, содержащих вершину
+                    self.vertex_normals[vertex_idx].x += face.normal.x
+                    self.vertex_normals[vertex_idx].y += face.normal.y
+                    self.vertex_normals[vertex_idx].z += face.normal.z
         
         # Нормализуем нормали вершин
-        for i in range(len(self.vertex_normals)):
-            self.vertex_normals[i].normalize()
+        for i in range(vertex_count):
+            length = self.vertex_normals[i].length()
+            if length > 0:
+                self.vertex_normals[i].x /= length
+                self.vertex_normals[i].y /= length
+                self.vertex_normals[i].z /= length
+            else:
+                # Если нормаль нулевой длины, устанавливаем стандартную нормаль
+                self.vertex_normals[i] = Vector3D(0, 0, 1)
+                
+        return self.vertex_normals
     
     def apply_transform(self, transform_matrix):
         """Применяет матрицу трансформации ко всем вершинам объекта"""
@@ -446,13 +500,20 @@ class LetterB(Object3D):
         self.height = height
         self.width = width
         self.depth = depth
+        
+        # Установка материала для буквы Б (глубокий синий)
         self.material = Material(
-            ambient=(20, 20, 50),
-            diffuse=(70, 70, 200),
-            specular=(255, 255, 255),
+            ambient=(10, 15, 30),
+            diffuse=(30, 60, 150),
+            specular=(200, 220, 255),
             shininess=64
         )
+        
+        # Построение геометрии буквы
         self.build()
+        
+        # Вычисление нормалей вершин для освещения
+        self.calculate_vertex_normals()
     
     def set_dimensions(self, height, width, depth):
         """Устанавливает размеры буквы"""
@@ -616,13 +677,20 @@ class LetterZ(Object3D):
         self.height = height
         self.width = width
         self.depth = depth
+        
+        # Установка материала для буквы З (бордовый)
         self.material = Material(
-            ambient=(50, 20, 20),
-            diffuse=(200, 70, 70),
-            specular=(255, 255, 255),
+            ambient=(30, 10, 15),
+            diffuse=(150, 30, 60),
+            specular=(255, 200, 220),
             shininess=64
         )
+        
+        # Построение геометрии буквы
         self.build()
+        
+        # Вычисление нормалей вершин для освещения
+        self.calculate_vertex_normals()
     
     def set_dimensions(self, height, width, depth):
         """Устанавливает размеры буквы"""

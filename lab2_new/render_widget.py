@@ -66,7 +66,7 @@ class RenderWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         
         # Очистка фона
-        painter.fillRect(self.rect(), QColor(30, 30, 30))
+        painter.fillRect(self.rect(), QColor(30, 30, 45))  # Более глубокий цвет фона
         
         # Получение размеров виджета
         width = self.width()
@@ -82,6 +82,10 @@ class RenderWidget(QWidget):
         self.z_buffer.fill(float('inf'))
         self.color_buffer.fill(Qt.black)
         
+        # Автомасштабирование при необходимости
+        if self.auto_scale:
+            self.auto_scale_objects()
+        
         # Получение матрицы проекции
         projection_matrix = self.get_projection_matrix()
         
@@ -89,16 +93,69 @@ class RenderWidget(QWidget):
         view_matrix = self.camera.get_view_matrix()
         
         # Преобразование координат объектов
-        self.letter_b.transform_vertices(view_matrix, projection_matrix, width, height)
-        self.letter_z.transform_vertices(view_matrix, projection_matrix, width, height)
+        try:
+            self.letter_b.transform_vertices(view_matrix, projection_matrix, width, height)
+            self.letter_z.transform_vertices(view_matrix, projection_matrix, width, height)
+            
+            # Обеспечиваем правильное положение координатных осей, если они существуют
+            if self.coordinate_axes:
+                try:
+                    self.coordinate_axes.transform_vertices(view_matrix, projection_matrix, width, height)
+                except Exception as e:
+                    print(f"Ошибка при преобразовании координатных осей: {e}")
+        except Exception as e:
+            print(f"Ошибка при преобразовании координат: {e}")
+            return
         
         # Отрисовка объектов в зависимости от режима
         if self.render_mode == "wireframe":
             self.draw_wireframe(painter, self.letter_b)
             self.draw_wireframe(painter, self.letter_z)
         elif self.render_mode == "hidden_surface":
-            self.draw_hidden_surface(painter, self.letter_b)
-            self.draw_hidden_surface(painter, self.letter_z)
+            # Копируем все грани для сортировки
+            all_faces = []
+            
+            # Добавляем грани буквы Б
+            for face_idx, face in enumerate(self.letter_b.faces):
+                if self.letter_b.is_face_visible(face_idx, self.camera.position):
+                    all_faces.append(("b", face_idx, face, self.get_face_depth(self.letter_b, face_idx)))
+            
+            # Добавляем грани буквы З
+            for face_idx, face in enumerate(self.letter_z.faces):
+                if self.letter_z.is_face_visible(face_idx, self.camera.position):
+                    all_faces.append(("z", face_idx, face, self.get_face_depth(self.letter_z, face_idx)))
+            
+            # Сортировка всех граней по глубине
+            all_faces.sort(key=lambda f: -f[3])
+            
+            # Отрисовка отсортированных граней
+            for obj_type, face_idx, face, depth in all_faces:
+                obj = self.letter_b if obj_type == "b" else self.letter_z
+                
+                # Отрисовка грани
+                points = [QPoint(obj.transformed_vertices[idx][0], obj.transformed_vertices[idx][1]) 
+                         for idx in face.vertices]
+                
+                # Вычисляем цвет с учётом освещения
+                face_center = face.get_center(obj.vertices)
+                face_color = self.light.calculate_lighting(
+                    face_center, 
+                    face.normal, 
+                    self.camera.position, 
+                    obj.material
+                )
+                
+                # Устанавливаем цвет грани
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(*face_color)))
+                
+                # Рисуем многоугольник
+                painter.drawPolygon(points)
+                
+                # Рисуем контур
+                painter.setPen(QPen(QColor(10, 10, 10)))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawPolygon(points)
         elif self.render_mode == "solid":
             # Сначала очищаем буферы
             self.z_buffer.fill(float('inf'))
@@ -135,53 +192,76 @@ class RenderWidget(QWidget):
     
     def draw_wireframe(self, painter, obj):
         """Отрисовка каркасной модели"""
+        # Проверка наличия трансформированных вершин
+        if not hasattr(obj, 'transformed_vertices') or len(obj.transformed_vertices) == 0:
+            print(f"Нет трансформированных вершин для отрисовки: {len(obj.vertices)} вершин в модели")
+            return
+            
         # Настройка пера для отрисовки линий
         pen = QPen(QColor(255, 255, 255))
         pen.setWidth(1)
         painter.setPen(pen)
         
-        # Для каждой грани объекта
-        for face in obj.faces:
-            # Для каждой пары соседних вершин грани
-            for i in range(len(face.vertices)):
-                # Индексы текущей и следующей вершины
-                idx1 = face.vertices[i]
-                idx2 = face.vertices[(i + 1) % len(face.vertices)]
-                
-                # Получение координат вершин
-                p1 = obj.transformed_vertices[idx1]
-                p2 = obj.transformed_vertices[idx2]
-                
-                # Отрисовка линии
-                painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+        try:
+            # Для каждой грани объекта
+            for face in obj.faces:
+                # Для каждой пары соседних вершин грани
+                for i in range(len(face.vertices)):
+                    # Индексы текущей и следующей вершины
+                    idx1 = face.vertices[i]
+                    idx2 = face.vertices[(i + 1) % len(face.vertices)]
+                    
+                    # Проверяем, что индексы в допустимом диапазоне
+                    if not (0 <= idx1 < len(obj.transformed_vertices) and 0 <= idx2 < len(obj.transformed_vertices)):
+                        continue
+                    
+                    # Получение координат вершин
+                    p1 = obj.transformed_vertices[idx1]
+                    p2 = obj.transformed_vertices[idx2]
+                    
+                    # Отрисовка линии
+                    painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+        except Exception as e:
+            print(f"Ошибка при отрисовке каркасной модели: {e}")
     
     def draw_hidden_surface(self, painter, obj):
         """Отрисовка модели с удалением невидимых поверхностей"""
-        # Копируем грани и их индексы
-        faces_to_draw = [(i, face) for i, face in enumerate(obj.faces)]
+        # Проверка наличия трансформированных вершин
+        if not hasattr(obj, 'transformed_vertices') or len(obj.transformed_vertices) == 0:
+            return
         
-        # Сортировка граней по глубине (алгоритм художника)
-        faces_to_draw.sort(key=lambda f: -self.get_face_depth(obj, f[0]))
-        
-        # Для каждой грани
-        for face_idx, face in faces_to_draw:
-            # Проверяем, видима ли грань
-            if obj.is_face_visible(face_idx, self.camera.position):
-                # Отрисовка видимой грани
-                points = [QPoint(obj.transformed_vertices[idx][0], obj.transformed_vertices[idx][1]) 
-                         for idx in face.vertices]
-                
-                # Устанавливаем цвет грани
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(QBrush(QColor(*face.color)))
-                
-                # Рисуем многоугольник
-                painter.drawPolygon(points)
-                
-                # Рисуем контур
-                painter.setPen(QPen(QColor(0, 0, 0)))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawPolygon(points)
+        try:
+            # Копируем грани и их индексы
+            faces_to_draw = [(i, face) for i, face in enumerate(obj.faces)]
+            
+            # Сортировка граней по глубине (алгоритм художника)
+            faces_to_draw.sort(key=lambda f: -self.get_face_depth(obj, f[0]))
+            
+            # Для каждой грани
+            for face_idx, face in faces_to_draw:
+                # Проверяем, видима ли грань
+                if obj.is_face_visible(face_idx, self.camera.position):
+                    # Проверяем, что все индексы вершин в допустимом диапазоне
+                    if not all(0 <= idx < len(obj.transformed_vertices) for idx in face.vertices):
+                        continue
+                        
+                    # Отрисовка видимой грани
+                    points = [QPoint(obj.transformed_vertices[idx][0], obj.transformed_vertices[idx][1]) 
+                             for idx in face.vertices]
+                    
+                    # Устанавливаем цвет грани
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(QColor(*face.color)))
+                    
+                    # Рисуем многоугольник
+                    painter.drawPolygon(points)
+                    
+                    # Рисуем контур
+                    painter.setPen(QPen(QColor(0, 0, 0)))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawPolygon(points)
+        except Exception as e:
+            print(f"Ошибка при отрисовке с удалением невидимых поверхностей: {e}")
     
     def get_face_depth(self, obj, face_idx):
         """Вычисляет среднюю глубину грани для сортировки"""
@@ -193,67 +273,88 @@ class RenderWidget(QWidget):
     
     def draw_solid(self, obj):
         """Отрисовка модели с закрашиванием поверхностей"""
-        # Получаем размеры буфера
-        width = self.width()
-        height = self.height()
-        
-        # Копируем грани и их индексы
-        faces_to_draw = [(i, face) for i, face in enumerate(obj.faces)]
-        
-        # Отрисовка каждой грани
-        for face_idx, face in faces_to_draw:
-            # Проверяем, видима ли грань
-            if obj.is_face_visible(face_idx, self.camera.position):
-                # Получаем вершины грани
-                vertices = [obj.transformed_vertices[idx] for idx in face.vertices]
-                
-                # Вычисляем нормаль к грани
-                face.calculate_normal(obj.vertices)
-                
-                if self.shading_mode == "flat":
-                    # Монотонное закрашивание (вычисляем цвет один раз для всей грани)
-                    face_center = face.get_center(obj.vertices)
-                    face_color = self.light.calculate_lighting(
-                        face_center, 
-                        face.normal, 
-                        self.camera.position, 
-                        obj.material
-                    )
-                    
-                    # Заливка грани одним цветом
-                    self.fill_polygon(vertices, face_color)
-                    
-                elif self.shading_mode == "gouraud":
-                    # Закрашивание по Гуро (интерполяция цветов вершин)
-                    vertex_colors = []
-                    
-                    # Вычисляем цвет для каждой вершины
-                    for i, idx in enumerate(face.vertices):
-                        vertex_pos = obj.vertices[idx]
-                        vertex_normal = obj.vertex_normals[idx]
+        # Проверка наличия трансформированных вершин
+        if not hasattr(obj, 'transformed_vertices') or len(obj.transformed_vertices) == 0:
+            return
+            
+        try:
+            # Получаем размеры буфера
+            width = self.width()
+            height = self.height()
+            
+            # Копируем грани и их индексы
+            faces_to_draw = [(i, face) for i, face in enumerate(obj.faces)]
+            
+            # Отрисовка каждой грани
+            for face_idx, face in faces_to_draw:
+                # Проверяем, видима ли грань
+                if obj.is_face_visible(face_idx, self.camera.position):
+                    # Проверяем, что все индексы вершин в допустимом диапазоне
+                    if not all(0 <= idx < len(obj.transformed_vertices) for idx in face.vertices):
+                        continue
                         
-                        # Вычисляем освещение для данной вершины
-                        color = self.light.calculate_lighting(
-                            vertex_pos,
-                            vertex_normal,
-                            self.camera.position,
+                    # Получаем вершины грани
+                    vertices = [obj.transformed_vertices[idx] for idx in face.vertices]
+                    
+                    # Вычисляем нормаль к грани
+                    face.calculate_normal(obj.vertices)
+                    
+                    if self.shading_mode == "flat":
+                        # Монотонное закрашивание (вычисляем цвет один раз для всей грани)
+                        face_center = face.get_center(obj.vertices)
+                        face_color = self.light.calculate_lighting(
+                            face_center, 
+                            face.normal, 
+                            self.camera.position, 
                             obj.material
                         )
-                        vertex_colors.append(color)
-                    
-                    # Заливка полигона с интерполяцией цветов
-                    self.fill_polygon_gouraud(vertices, vertex_colors)
-                    
-                elif self.shading_mode == "phong":
-                    # Закрашивание по Фонгу (интерполяция нормалей)
-                    vertex_normals = []
-                    
-                    # Сохраняем нормаль для каждой вершины
-                    for idx in face.vertices:
-                        vertex_normals.append(obj.vertex_normals[idx])
-                    
-                    # Заливка полигона с интерполяцией нормалей
-                    self.fill_polygon_phong(vertices, vertex_normals, obj.material)
+                        
+                        # Заливка грани одним цветом
+                        self.fill_polygon(vertices, face_color)
+                        
+                    elif self.shading_mode == "gouraud":
+                        # Закрашивание по Гуро (интерполяция цветов вершин)
+                        vertex_colors = []
+                        
+                        # Вычисляем цвет для каждой вершины
+                        for i, idx in enumerate(face.vertices):
+                            vertex_pos = obj.vertices[idx]
+                            # Проверяем наличие нормалей для вершин
+                            if hasattr(obj, 'vertex_normals') and idx < len(obj.vertex_normals):
+                                vertex_normal = obj.vertex_normals[idx]
+                            else:
+                                # Если нормали нет, используем нормаль грани
+                                vertex_normal = face.normal
+                            
+                            # Вычисляем освещение для данной вершины
+                            color = self.light.calculate_lighting(
+                                vertex_pos,
+                                vertex_normal,
+                                self.camera.position,
+                                obj.material
+                            )
+                            vertex_colors.append(color)
+                        
+                        # Заливка полигона с интерполяцией цветов
+                        self.fill_polygon_gouraud(vertices, vertex_colors)
+                        
+                    elif self.shading_mode == "phong":
+                        # Закрашивание по Фонгу (интерполяция нормалей)
+                        vertex_normals = []
+                        
+                        # Сохраняем нормаль для каждой вершины
+                        for idx in face.vertices:
+                            # Проверяем наличие нормалей для вершин
+                            if hasattr(obj, 'vertex_normals') and idx < len(obj.vertex_normals):
+                                vertex_normals.append(obj.vertex_normals[idx])
+                            else:
+                                # Если нормали нет, используем нормаль грани
+                                vertex_normals.append(face.normal)
+                        
+                        # Заливка полигона с интерполяцией нормалей
+                        self.fill_polygon_phong(vertices, vertex_normals, obj.material)
+        except Exception as e:
+            print(f"Ошибка при отрисовке с закрашиванием: {e}")
     
     def fill_polygon(self, vertices, color):
         """Заливка полигона одним цветом (для метода плоского закрашивания)"""
@@ -417,7 +518,7 @@ class RenderWidget(QWidget):
                         t = (y - y1) / (y2 - y1)
                         x = x1 + t * (x2 - x1)
                         
-                        # Интерполируем нормаль
+                        # Плавная интерполяция нормали с гладким переходом
                         nx = normal1.x + t * (normal2.x - normal1.x)
                         ny = normal1.y + t * (normal2.y - normal1.y)
                         nz = normal1.z + t * (normal2.z - normal1.z)
@@ -446,7 +547,7 @@ class RenderWidget(QWidget):
                     
                     # Заполняем пиксели между start_x и end_x с интерполяцией нормалей
                     for x in range(start_x, end_x + 1):
-                        # Линейная интерполяция нормали
+                        # Плавная интерполяция нормали
                         if start_x != end_x:
                             t = (x - start_x) / (end_x - start_x)
                             nx = start_normal.x + t * (end_normal.x - start_normal.x)
@@ -468,7 +569,14 @@ class RenderWidget(QWidget):
                         z = self.interpolate_z(vertices, x, y)
                         if z < self.z_buffer[y, x]:
                             # Вычисляем освещение для каждого пикселя
-                            point = Point3D(x, y, z)  # Приближенная позиция в 3D
+                            # Используем среднюю позицию из всех вершин как приближенную позицию в 3D
+                            avg_x = sum(v[0] for v in vertices) / len(vertices)
+                            avg_y = sum(v[1] for v in vertices) / len(vertices)
+                            avg_z = sum(v[2] for v in vertices) / len(vertices)
+                            
+                            point = Point3D(avg_x + (x - avg_x) * 0.01, 
+                                           avg_y + (y - avg_y) * 0.01, 
+                                           z)
                             
                             # Вычисляем цвет с помощью модели освещения
                             color = self.light.calculate_lighting(
@@ -483,8 +591,41 @@ class RenderWidget(QWidget):
     
     def interpolate_z(self, vertices, x, y):
         """Интерполирует значение z для заданных x, y (для z-буфера)"""
-        # Для простоты используем среднее значение z всех вершин
-        # В реальном z-буфере необходима барицентрическая интерполяция
+        # Используем барицентрическую интерполяцию для треугольников
+        if len(vertices) == 3:
+            x1, y1, z1 = vertices[0][0], vertices[0][1], vertices[0][2]
+            x2, y2, z2 = vertices[1][0], vertices[1][1], vertices[1][2]
+            x3, y3, z3 = vertices[2][0], vertices[2][1], vertices[2][2]
+            
+            # Вычисляем площадь всего треугольника (удвоенную)
+            area = abs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)))
+            
+            if area == 0:
+                return float('inf')  # Треугольник вырожден
+                
+            # Вычисляем барицентрические координаты
+            alpha = abs((x * (y2 - y3) + x2 * (y3 - y) + x3 * (y - y2))) / area
+            beta = abs((x1 * (y - y3) + x * (y3 - y1) + x3 * (y1 - y))) / area
+            gamma = 1 - alpha - beta
+            
+            # Проверяем, находится ли точка внутри треугольника
+            if 0 <= alpha <= 1 and 0 <= beta <= 1 and 0 <= gamma <= 1:
+                # Интерполируем z-значение
+                z = alpha * z1 + beta * z2 + gamma * z3
+                return z
+        
+        # Для многоугольников разбиваем на треугольники и ищем ближайший треугольник
+        if len(vertices) > 3:
+            # Создаем треугольники используя первую вершину как общую
+            min_z = float('inf')
+            for i in range(1, len(vertices) - 1):
+                triangle = [vertices[0], vertices[i], vertices[i + 1]]
+                z = self.interpolate_z(triangle, x, y)
+                if z < min_z:
+                    min_z = z
+            return min_z
+        
+        # Если не смогли вычислить, возвращаем среднее (как было)
         return sum(v[2] for v in vertices) / len(vertices)
     
     def draw_light(self, painter, view_matrix, projection_matrix, width, height):
@@ -618,34 +759,83 @@ class RenderWidget(QWidget):
     
     def draw_coordinate_axes(self, painter):
         """Рисует координатные оси на сцене"""
-        if not self.coordinate_axes:
+        if not self.coordinate_axes or not hasattr(self.coordinate_axes, 'transformed_vertices'):
             return
-            
-        # Получение матрицы проекции и вида
-        projection_matrix = self.get_projection_matrix()
-        view_matrix = self.camera.get_view_matrix()
         
-        # Копируем оси координат
-        axes = copy.deepcopy(self.coordinate_axes)
+        try:
+            # Рисуем оси в виде линий
+            for face in self.coordinate_axes.faces:
+                if len(face.vertices) == 2:  # Линия
+                    # Проверяем, что индексы вершин в допустимом диапазоне
+                    if all(0 <= idx < len(self.coordinate_axes.transformed_vertices) for idx in face.vertices):
+                        # Индексы вершин
+                        idx1 = face.vertices[0]
+                        idx2 = face.vertices[1]
+                        
+                        # Получение координат вершин
+                        p1 = self.coordinate_axes.transformed_vertices[idx1]
+                        p2 = self.coordinate_axes.transformed_vertices[idx2]
+                        
+                        # Настройка пера для отрисовки
+                        pen = QPen(QColor(*face.color))
+                        pen.setWidth(2)
+                        painter.setPen(pen)
+                        
+                        # Отрисовка линии
+                        painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+        except Exception as e:
+            print(f"Ошибка при отрисовке координатных осей: {e}")
+    
+    def auto_scale_objects(self):
+        """Автоматически масштабирует объекты для оптимального отображения"""
+        # Вычисление общего ограничивающего прямоугольника для всех объектов
+        min_x, min_y, min_z = float('inf'), float('inf'), float('inf')
+        max_x, max_y, max_z = float('-inf'), float('-inf'), float('-inf')
         
-        # Преобразование координат осей
-        axes.transform_vertices(view_matrix, projection_matrix, self.width(), self.height())
+        # Добавление вершин буквы Б
+        for vertex in self.letter_b.vertices:
+            min_x = min(min_x, vertex.x)
+            min_y = min(min_y, vertex.y)
+            min_z = min(min_z, vertex.z)
+            max_x = max(max_x, vertex.x)
+            max_y = max(max_y, vertex.y)
+            max_z = max(max_z, vertex.z)
         
-        # Рисуем оси в виде линий
-        for face in axes.faces:
-            if len(face.vertices) == 2:  # Линия
-                # Индексы текущей и следующей вершины
-                idx1 = face.vertices[0]
-                idx2 = face.vertices[1]
-                
-                # Получение координат вершин
-                p1 = axes.transformed_vertices[idx1]
-                p2 = axes.transformed_vertices[idx2]
-                
-                # Настройка пера для отрисовки
-                pen = QPen(QColor(*face.color))
-                pen.setWidth(2)
-                painter.setPen(pen)
-                
-                # Отрисовка линии
-                painter.drawLine(p1[0], p1[1], p2[0], p2[1]) 
+        # Добавление вершин буквы З
+        for vertex in self.letter_z.vertices:
+            min_x = min(min_x, vertex.x)
+            min_y = min(min_y, vertex.y)
+            min_z = min(min_z, vertex.z)
+            max_x = max(max_x, vertex.x)
+            max_y = max(max_y, vertex.y)
+            max_z = max(max_z, vertex.z)
+        
+        # Вычисление центра и размера ограничивающего прямоугольника
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_z = (min_z + max_z) / 2
+        
+        # Вычисление размера сцены
+        size_x = max_x - min_x
+        size_y = max_y - min_y
+        size_z = max_z - min_z
+        scene_size = max(size_x, size_y, size_z)
+        
+        # Перемещение камеры для лучшего обзора
+        # Устанавливаем target камеры в центр сцены
+        self.camera.target = Point3D(center_x, center_y, center_z)
+        
+        # Устанавливаем расстояние камеры в зависимости от размера сцены
+        # Обеспечиваем, чтобы вся сцена была видима
+        distance = scene_size * 3  # Коэффициент для лучшего обзора
+        distance = max(distance, 5.0)  # Минимальное расстояние
+        
+        # Обновляем позицию камеры, сохраняя углы поворота
+        rad_x = math.radians(self.camera.rot_x)
+        rad_y = math.radians(self.camera.rot_y)
+        
+        x = distance * math.sin(rad_y) * math.cos(rad_x)
+        y = distance * math.sin(rad_x)
+        z = distance * math.cos(rad_y) * math.cos(rad_x)
+        
+        self.camera.position = Point3D(x + center_x, y + center_y, z + center_z) 
