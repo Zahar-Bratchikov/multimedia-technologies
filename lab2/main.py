@@ -337,7 +337,6 @@ class Letter3D:
         h = self.height     # высота
         d = self.depth      # глубина (толщина буквы)
         t = min(w, h) * 0.15  # толщина основных линий пропорционально минимальному размеру
-        r = t * 0.8         # радиус скругления, увеличен для лучшей визуализации
 
         # Сбрасываем текущие вершины, рёбра и треугольники
         self.vertices = []
@@ -345,11 +344,11 @@ class Letter3D:
         self.triangles = []
 
         if self.letter_type == 'Б':
-            self._create_letter_b(w, h, d, t, r)
+            self._create_letter_b(w, h, d, t)
         elif self.letter_type == 'З':
-            self._create_letter_z(w, h, d, t, r)
+            self._create_letter_z(w, h, d, t)
     
-    def _create_letter_b(self, w, h, d, t, r):
+    def _create_letter_b(self, w, h, d, t):
         """Создает геометрию буквы 'Б'"""
         # 1. Вертикальная линия слева (полная высота)
         self._add_box_with_triangles(
@@ -392,7 +391,7 @@ class Letter3D:
             self.color
         )
     
-    def _create_letter_z(self, w, h, d, t, r):
+    def _create_letter_z(self, w, h, d, t):
         """Создает геометрию буквы 'З'"""
         t_half = t/2
         
