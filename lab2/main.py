@@ -331,6 +331,7 @@ class Letter3D:
         self.update_geometry()
     
     def update_geometry(self):
+        """Обновляет геометрию буквы на основе текущих параметров"""
         # Базовые размеры для букв
         w = self.width      # ширина
         h = self.height     # высота
@@ -338,334 +339,109 @@ class Letter3D:
         t = min(w, h) * 0.15  # толщина основных линий пропорционально минимальному размеру
         r = t * 0.8         # радиус скругления, увеличен для лучшей визуализации
 
-        # Сбрасываем текущие верщины, рёбра и треугольники
+        # Сбрасываем текущие вершины, рёбра и треугольники
         self.vertices = []
         self.edges = []
         self.triangles = []
 
         if self.letter_type == 'Б':
-            # 1. Вертикальная линия слева
-            self._add_rounded_box(
-                Vector3D(-w/2, -d/2, -h/2-7),       # левый нижний передний
-                Vector3D(-w/2+t, d/2, h/2),       # правый верхний задний
-                r
-            )
-            
-            # 2. Верхняя горизонтальная линия
-            self._add_rounded_box(
-                Vector3D(-w/2+t, -d/2, h/2-t),    # левый нижний передний
-                Vector3D(35, d/2, h/2),          # правый верхний задний
-                r
-            )
-            
-            #3. Средняя горизонтальная линия
-            self._add_rounded_box(
-                Vector3D(-w/2+t, -d/2, 0 - t/2),  # левый нижний передний
-                Vector3D(0, d/2, 0 + t/2),        # правый верхний задний
-                r
-            )
-            
-            # 4. Полуокружность
-            radius = h/4
-            center_x = 1.5 # Центр справа от средней линии
-            center_z = -h/4       # Центр на уровне средней линии
-            
-            # Создаем полуокружность, повернутую на 90 градусов против часовой стрелки
-            self._add_arc_segment_around_z(
-                Vector3D(center_x, -d/2, center_z),  # центр передней полуокружности
-                Vector3D(center_x, d/2, center_z),   # центр задней полуокружности
-                radius, t, -90, 90  # Полукруг, открывающийся влево (повернутый на 90° против часовой)
-            )
-
-            #5. Нижняя горизонтальная линия
-            self._add_rounded_box(
-                Vector3D(-w/2+t, -d/2, -h/2-7),  # левый нижний передний
-                Vector3D(0, d/2, -h/2-7+t),        # правый верхний задний
-                r
-            )
-
+            self._create_letter_b(w, h, d, t, r)
         elif self.letter_type == 'З':
-            # Используем полуокружности для буквы З, убираем лишние прямоугольники
-            t_half = t/2
-            
-            # Верхняя полуокружность (открыта вверх) с удлиненной верхней частью
-            radius_top = h/4
-            extension_factor_top = 1.3  # Коэффициент удлинения верхней части
-            center_top_x = 0  # Центр в середине
-            center_top_z = h/4
-            
-            # Изменяем диапазон углов для верхней полуокружности
-            # делаем верхнюю часть (от 270 до 360) длиннее на коэффициент extension_factor_top
-            start_angle_top = 270  # Начальный угол не меняется
-            end_angle_top = 360 + (450 - 360) * extension_factor_top  # Удлиняем верхнюю часть
-            
-            self._add_arc_segment_around_z(
-                Vector3D(center_top_x, -d/2, center_top_z),  # центр передней полуокружности
-                Vector3D(center_top_x, d/2, center_top_z),   # центр задней полуокружности
-                radius_top, t, start_angle_top, end_angle_top  # Полукруг с удлиненной верхней частью
-            )
-            
-            # Нижняя полуокружность (открыта вверх) с удлиненной нижней частью
-            radius_bottom = h/4
-            extension_factor_bottom = 0.55  # Коэффициент удлинения нижней части - такой же как у верхней полуокружности
-            center_bottom_x = 0  # Центр в середине
-            center_bottom_z = -h/4
-            
-            # Изменяем диапазон углов для нижней полуокружности
-            # делаем нижнюю часть зеркальной верхней части верхней полуокружности
-            base_angle_bottom = 180  # Фиксированный начальный угол (левая точка)
-            mid_angle = 270  # Середина (нижняя точка)
-            # Так как верхний угол увеличен с 360-270=90 до 90*1.3=117,
-            # нижний угол должен быть соответственно увеличен с 270-180=90 до 90*1.3=117
-            # Поэтому start_angle_bottom = 270 - 117 = 153
-            start_angle_bottom = mid_angle - (mid_angle - base_angle_bottom) * extension_factor_bottom
-            end_angle_bottom = 450  # Конечный угол не меняется
-            
-            self._add_arc_segment_around_z(
-                Vector3D(center_bottom_x, -d/2, center_bottom_z),  # центр передней полуокружности
-                Vector3D(center_bottom_x, d/2, center_bottom_z),   # центр задней полуокружности
-                radius_bottom, t, start_angle_bottom, end_angle_bottom  # Полукруг с удлиненной нижней частью
-            )
-            
-            # Средняя горизонтальная линия (центрирована)
-            self._add_rounded_box(
-                Vector3D(-w/6, -d/2, -t_half),     # левый нижний передний
-                Vector3D(w/6, d/2, t_half),        # правый верхний задний
-                r
-            )
+            self._create_letter_z(w, h, d, t, r)
     
-    def _add_arc_segment_around_z(self, front_center, back_center, radius, thickness, start_angle, end_angle):
-        """Добавляет сегмент арки вокруг оси Z (в плоскости XY)"""
-        # Создаем внутренний и внешний радиусы
-        inner_radius = radius - thickness/2
-        outer_radius = radius + thickness/2
+    def _create_letter_b(self, w, h, d, t, r):
+        """Создает геометрию буквы 'Б'"""
+        # 1. Вертикальная линия слева (полная высота)
+        self._add_box_with_triangles(
+            Vector3D(-w/2, -d/2, -h/2-7),       # левый нижний передний
+            Vector3D(-w/2+t, d/2, h/2),         # правый верхний задний
+            self.color
+        )
         
-        # Вычисляем вершины для внутренней и внешней дуги
-        vertices_front_inner = []
-        vertices_front_outer = []
-        vertices_back_inner = []
-        vertices_back_outer = []
+        # 2. Верхняя горизонтальная линия
+        self._add_box_with_triangles(
+            Vector3D(-w/2+t, -d/2, h/2-t),      # левый нижний передний
+            Vector3D(35, d/2, h/2),             # правый верхний задний
+            self.color
+        )
         
-        # Вычисляем вершины
-        for i in range(self.segments + 1):
-            angle = start_angle + (end_angle - start_angle) * (i / self.segments)
-            angle_rad = math.radians(angle)
-            
-            # Вычисляем косинус и синус для точки на окружности
-            cos_a = math.cos(angle_rad)
-            sin_a = math.sin(angle_rad)
-            
-            # Фронтальная грань внутренняя точка (в плоскости XY)
-            x_inner = front_center.x + inner_radius * cos_a
-            y_inner = front_center.y
-            z_inner = front_center.z + inner_radius * sin_a
-            vertices_front_inner.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_inner, y_inner, z_inner))
-            
-            # Фронтальная грань внешняя точка
-            x_outer = front_center.x + outer_radius * cos_a
-            y_outer = front_center.y
-            z_outer = front_center.z + outer_radius * sin_a
-            vertices_front_outer.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_outer, y_outer, z_outer))
-            
-            # Задняя грань внутренняя точка
-            vertices_back_inner.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_inner, back_center.y, z_inner))
-            
-            # Задняя грань внешняя точка
-            vertices_back_outer.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_outer, back_center.y, z_outer))
+        # 3. Средняя горизонтальная линия
+        self._add_box_with_triangles(
+            Vector3D(-w/2+t, -d/2, 0 - t/2),    # левый нижний передний
+            Vector3D(0, d/2, 0 + t/2),          # правый верхний задний
+            self.color
+        )
         
-        # Создаем треугольники и рёбра
-        for i in range(self.segments):
-            # Фронтальная грань (два треугольника для четырехугольника)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.vertices[vertices_front_inner[i+1]],
-                self.color
-            ))
-            
-            # Задняя грань (два треугольника для четырехугольника)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_back_inner[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.vertices[vertices_back_outer[i]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_back_inner[i]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.color
-            ))
-            
-            # Верхняя грань (внешняя часть дуги)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_back_outer[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.color
-            ))
-            
-            # Нижняя грань (внутренняя часть дуги)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.vertices[vertices_back_inner[i]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_inner[i+1]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.color
-            ))
-            
-            # Добавляем рёбра (контур)
-            self.edges.append((vertices_front_inner[i], vertices_front_inner[i+1]))
-            self.edges.append((vertices_front_outer[i], vertices_front_outer[i+1]))
-            self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
-            self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
-    
-    def _add_arc_segment(self, front_center, back_center, radius, thickness, start_angle, end_angle):
-        """Добавляет сегмент арки в плоскости XZ"""
-        # Этот метод оставляем для совместимости, но он не используется в текущей реализации
-        # Создаем внутренний и внешний радиусы
-        inner_radius = radius - thickness/2
-        outer_radius = radius + thickness/2
+        # 4. Полуокружность (с улучшенным закрашиванием)
+        radius = h/4
+        center_x = 1.5                          # Центр справа от средней линии
+        center_z = -h/4                         # Центр на уровне средней линии
         
-        # Вычисляем вершины для внутренней и внешней дуги
-        vertices_front_inner = []
-        vertices_front_outer = []
-        vertices_back_inner = []
-        vertices_back_outer = []
+        # Создаем полуокружность с правильным закрашиванием граней
+        self._add_smooth_arc_segment(
+            Vector3D(center_x, -d/2, center_z),  # центр передней полуокружности
+            Vector3D(center_x, d/2, center_z),   # центр задней полуокружности
+            radius, t, -90, 90,                 # Углы полуокружности
+            self.color
+        )
         
-        # Вычисляем вершины
-        for i in range(self.segments + 1):
-            angle = start_angle + (end_angle - start_angle) * (i / self.segments)
-            angle_rad = math.radians(angle)
-            
-            # Вычисляем косинус и синус для точки на окружности
-            cos_a = math.cos(angle_rad)
-            sin_a = math.sin(angle_rad)
-            
-            # Фронтальная грань внутренняя точка
-            x_inner = front_center.x + inner_radius * cos_a
-            z_inner = front_center.z + inner_radius * sin_a
-            vertices_front_inner.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_inner, front_center.y, z_inner))
-            
-            # Фронтальная грань внешняя точка
-            x_outer = front_center.x + outer_radius * cos_a
-            z_outer = front_center.z + outer_radius * sin_a
-            vertices_front_outer.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_outer, front_center.y, z_outer))
-            
-            # Задняя грань внутренняя точка
-            vertices_back_inner.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_inner, back_center.y, z_inner))
-            
-            # Задняя грань внешняя точка
-            vertices_back_outer.append(len(self.vertices))
-            self.vertices.append(Vector3D(x_outer, back_center.y, z_outer))
-        
-        # Создаем треугольники и рёбра
-        for i in range(self.segments):
-            # Фронтальная грань (два треугольника для четырехугольника)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.vertices[vertices_front_inner[i+1]],
-                self.color
-            ))
-            
-            # Задняя грань (два треугольника для четырехугольника)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_back_inner[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.vertices[vertices_back_outer[i]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_back_inner[i]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.color
-            ))
-            
-            # Верхняя грань (внешняя часть дуги)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_back_outer[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_outer[i]],
-                self.vertices[vertices_back_outer[i+1]],
-                self.vertices[vertices_front_outer[i+1]],
-                self.color
-            ))
-            
-            # Нижняя грань (внутренняя часть дуги)
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.vertices[vertices_back_inner[i]],
-                self.color
-            ))
-            
-            self.triangles.append(Triangle(
-                self.vertices[vertices_front_inner[i]],
-                self.vertices[vertices_front_inner[i+1]],
-                self.vertices[vertices_back_inner[i+1]],
-                self.color
-            ))
-            
-            # Добавляем рёбра (контур)
-            self.edges.append((vertices_front_inner[i], vertices_front_inner[i+1]))
-            self.edges.append((vertices_front_outer[i], vertices_front_outer[i+1]))
-            self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
-            self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
-    
-    def _add_rounded_box(self, min_point, max_point, corner_radius):
-        """Добавляет параллелепипед со скругленными углами"""
-        # Стандартное добавление основного блока без скруглений
-        self._add_box(
-            min_point,
-            max_point
+        # 5. Нижняя горизонтальная линия
+        self._add_box_with_triangles(
+            Vector3D(-w/2+t, -d/2, -h/2-7),     # левый нижний передний
+            Vector3D(0, d/2, -h/2-7+t),         # правый верхний задний
+            self.color
         )
     
-    def _add_box(self, min_point, max_point):
-        """Добавляет параллелепипед (прямоугольный блок) к 3D модели"""
-        # Вычисляем все 8 вершин параллелепипеда
+    def _create_letter_z(self, w, h, d, t, r):
+        """Создает геометрию буквы 'З'"""
+        t_half = t/2
+        
+        # 1. Верхняя полуокружность с улучшенным закрашиванием
+        radius_top = h/4
+        extension_factor_top = 1.3               # Коэффициент удлинения верхней части
+        center_top_x = 0                         # Центр в середине
+        center_top_z = h/4
+        
+        # Диапазон углов для верхней полуокружности
+        start_angle_top = 270
+        end_angle_top = 360 + (450 - 360) * extension_factor_top
+        
+        self._add_smooth_arc_segment(
+            Vector3D(center_top_x, -d/2, center_top_z),
+            Vector3D(center_top_x, d/2, center_top_z),
+            radius_top, t, start_angle_top, end_angle_top,
+            self.color
+        )
+        
+        # 2. Нижняя полуокружность с улучшенным закрашиванием
+        radius_bottom = h/4
+        extension_factor_bottom = 0.55           # Коэффициент удлинения нижней части
+        center_bottom_x = 0                      # Центр в середине
+        center_bottom_z = -h/4
+        
+        # Диапазон углов для нижней полуокружности
+        base_angle_bottom = 180
+        mid_angle = 270
+        start_angle_bottom = mid_angle - (mid_angle - base_angle_bottom) * extension_factor_bottom
+        end_angle_bottom = 450
+        
+        self._add_smooth_arc_segment(
+            Vector3D(center_bottom_x, -d/2, center_bottom_z),
+            Vector3D(center_bottom_x, d/2, center_bottom_z),
+            radius_bottom, t, start_angle_bottom, end_angle_bottom,
+            self.color
+        )
+        
+        # 3. Средняя горизонтальная линия
+        self._add_box_with_triangles(
+            Vector3D(-w/6, -d/2, -t_half),      # левый нижний передний
+            Vector3D(w/6, d/2, t_half),         # правый верхний задний
+            self.color
+        )
+    
+    def _add_box_with_triangles(self, min_point, max_point, color):
+        """Добавляет параллелепипед с правильным заполнением треугольниками"""
+        # Сохраняем текущий индекс вершины для создания граней
         v_offset = len(self.vertices)
         
         # Передняя грань (y = min_y)
@@ -680,40 +456,38 @@ class Letter3D:
         self.vertices.append(Vector3D(max_point.x, max_point.y, max_point.z))  # 6: правый верхний
         self.vertices.append(Vector3D(min_point.x, max_point.y, max_point.z))  # 7: левый верхний
         
-        # Добавляем рёбра для параллелепипеда
-                # Передняя грань
+        # Добавляем рёбра для каркасного отображения
+        # Передняя грань
         self.edges.append((v_offset+0, v_offset+1))
         self.edges.append((v_offset+1, v_offset+2))
         self.edges.append((v_offset+2, v_offset+3))
         self.edges.append((v_offset+3, v_offset+0))
         
-                # Задняя грань
+        # Задняя грань
         self.edges.append((v_offset+4, v_offset+5))
         self.edges.append((v_offset+5, v_offset+6))
         self.edges.append((v_offset+6, v_offset+7))
         self.edges.append((v_offset+7, v_offset+4))
         
-        # Соединения
+        # Соединения между гранями
         self.edges.append((v_offset+0, v_offset+4))
         self.edges.append((v_offset+1, v_offset+5))
         self.edges.append((v_offset+2, v_offset+6))
         self.edges.append((v_offset+3, v_offset+7))
         
-        # Добавляем треугольники для параллелепипеда
-        # Используем цвет буквы
-        
+        # Добавляем треугольники для закрашивания
         # Передняя грань (2 треугольника)
         self.triangles.append(Triangle(
             self.vertices[v_offset+0], 
             self.vertices[v_offset+1], 
             self.vertices[v_offset+2], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+0], 
             self.vertices[v_offset+2], 
             self.vertices[v_offset+3], 
-            self.color
+            color
         ))
         
         # Задняя грань (2 треугольника)
@@ -721,13 +495,13 @@ class Letter3D:
             self.vertices[v_offset+4], 
             self.vertices[v_offset+6], 
             self.vertices[v_offset+5], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+4], 
             self.vertices[v_offset+7], 
             self.vertices[v_offset+6], 
-            self.color
+            color
         ))
         
         # Верхняя грань (2 треугольника)
@@ -735,13 +509,13 @@ class Letter3D:
             self.vertices[v_offset+3], 
             self.vertices[v_offset+2], 
             self.vertices[v_offset+6], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+3], 
             self.vertices[v_offset+6], 
             self.vertices[v_offset+7], 
-            self.color
+            color
         ))
         
         # Нижняя грань (2 треугольника)
@@ -749,13 +523,13 @@ class Letter3D:
             self.vertices[v_offset+0], 
             self.vertices[v_offset+5], 
             self.vertices[v_offset+1], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+0], 
             self.vertices[v_offset+4], 
             self.vertices[v_offset+5], 
-            self.color
+            color
         ))
         
         # Левая грань (2 треугольника)
@@ -763,13 +537,13 @@ class Letter3D:
             self.vertices[v_offset+0], 
             self.vertices[v_offset+3], 
             self.vertices[v_offset+7], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+0], 
             self.vertices[v_offset+7], 
             self.vertices[v_offset+4], 
-            self.color
+            color
         ))
         
         # Правая грань (2 треугольника)
@@ -777,15 +551,137 @@ class Letter3D:
             self.vertices[v_offset+1], 
             self.vertices[v_offset+5], 
             self.vertices[v_offset+6], 
-            self.color
+            color
         ))
         self.triangles.append(Triangle(
             self.vertices[v_offset+1], 
             self.vertices[v_offset+6], 
             self.vertices[v_offset+2], 
-            self.color
+            color
         ))
-
+    
+    def _add_smooth_arc_segment(self, front_center, back_center, radius, thickness, start_angle, end_angle, color):
+        """Добавляет сегмент арки с улучшенным заполнением треугольников для плавного закрашивания"""
+        # Создаем внутренний и внешний радиусы
+        inner_radius = radius - thickness/2
+        outer_radius = radius + thickness/2
+        
+        # Массивы для хранения индексов вершин
+        vertices_front_inner = []
+        vertices_front_outer = []
+        vertices_back_inner = []
+        vertices_back_outer = []
+        
+        # Вычисляем вершины дуги
+        for i in range(self.segments + 1):
+            # Интерполируем угол от начального до конечного
+            angle = start_angle + (end_angle - start_angle) * (i / self.segments)
+            angle_rad = math.radians(angle)
+            
+            # Вычисляем позицию на окружности
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            
+            # Передняя внутренняя точка
+            x_inner = front_center.x + inner_radius * cos_a
+            y_inner = front_center.y
+            z_inner = front_center.z + inner_radius * sin_a
+            vertices_front_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, y_inner, z_inner))
+            
+            # Передняя внешняя точка
+            x_outer = front_center.x + outer_radius * cos_a
+            y_outer = front_center.y
+            z_outer = front_center.z + outer_radius * sin_a
+            vertices_front_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, y_outer, z_outer))
+            
+            # Задняя внутренняя точка
+            vertices_back_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, back_center.y, z_inner))
+            
+            # Задняя внешняя точка
+            vertices_back_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, back_center.y, z_outer))
+        
+        # Создаем треугольники и рёбра
+        for i in range(self.segments):
+            # Передняя грань (два треугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.vertices[vertices_front_inner[i+1]],
+                color
+            ))
+            
+            # Задняя грань (два треугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_back_outer[i]],
+                color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_outer[i+1]],
+                color
+            ))
+            
+            # Внешняя грань (два треугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_front_outer[i+1]],
+                color
+            ))
+            
+            # Внутренняя грань (два треугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_inner[i]],
+                color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_inner[i+1]],
+                self.vertices[vertices_back_inner[i+1]],
+                color
+            ))
+            
+            # Добавляем рёбра для каркасного режима
+            self.edges.append((vertices_front_inner[i], vertices_front_inner[i+1]))
+            self.edges.append((vertices_front_outer[i], vertices_front_outer[i+1]))
+            self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
+            self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
+            
+            # Соединяющие рёбра между передней и задней гранями
+            if i == 0 or i == self.segments - 1:
+                self.edges.append((vertices_front_inner[i], vertices_back_inner[i]))
+                self.edges.append((vertices_front_outer[i], vertices_back_outer[i]))
+            
+            # Радиальные рёбра
+            if i % (self.segments // 4) == 0:
+                self.edges.append((vertices_front_inner[i], vertices_front_outer[i]))
+                self.edges.append((vertices_back_inner[i], vertices_back_outer[i]))
+    
     def set_dimensions(self, width, height, depth):
         self.width = width
         self.height = height
