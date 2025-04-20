@@ -1,0 +1,32 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+---
+type: always
+title: Strict Coding Standards
+description: Follow these strict coding guidelines to maintain project quality and stability.
+---
+
+# Strict Coding Standards
+
+## Main Rules
+
+1. **Do not delete or modify existing working functionality** unless explicitly required by the technical specification (TS).
+2. **Do not write temporary, demo, or placeholder functions.** Provide a complete, production-ready implementation immediately.
+3. **Do not add comments suggesting future improvements or rewrites** (e.g., "this is a demo function, needs to be rewritten later").
+4. **Strictly follow the technical specification.** Avoid assumptions, guesswork, or speculative additions.
+5. **Do not make unnecessary changes** to already working code.
+6. **Follow the existing architecture and coding style** of the project.
+7. **Ensure full integration with existing code** — no isolated stubs or mockups.
+8. **Do not suggest alternative approaches** unless explicitly asked in the TS.
+9. **All responses and code comments must be in Russian.**
+10. **Validate that new code does not break existing functionality** before finalizing the changes.
+
+## Notes
+
+- Always prioritize stability and reliability.
+- Aim for clean, maintainable, and production-ready code.
+- These rules help maintain consistency and avoid regressions in the codebase.

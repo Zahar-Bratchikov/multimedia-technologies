@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QLabel, QSlider, QPushButton, QSpinBox,
                               QGroupBox, QDoubleSpinBox, QComboBox, QCheckBox, QTabWidget)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtGui import QPainter, QPen, QColor, QImage
 
 class Vector3D:
     def __init__(self, x=0, y=0, z=0):
@@ -23,6 +23,7 @@ class Triangle:
     def __init__(self, v1, v2, v3, color=None):
         self.vertices = [v1, v2, v3]
         self.color = color
+        self.normal = None  # Для хранения нормали к треугольнику
     
     def transform(self, matrix):
         result = Triangle(Vector3D(), Vector3D(), Vector3D(), self.color)
@@ -58,7 +59,95 @@ class Triangle:
             normal.y /= length
             normal.z /= length
             
+        self.normal = normal
         return normal
+        
+    def is_visible(self, camera_position):
+        """Определяет видимость треугольника относительно камеры"""
+        if self.normal is None:
+            self.calculate_normal()
+            
+        # Получаем вектор от любой вершины треугольника к камере
+        v_to_camera = Vector3D(
+            camera_position.x - self.vertices[0].x,
+            camera_position.y - self.vertices[0].y,
+            camera_position.z - self.vertices[0].z
+        )
+        
+        # Вычисляем скалярное произведение
+        dot_product = self.normal.x * v_to_camera.x + self.normal.y * v_to_camera.y + self.normal.z * v_to_camera.z
+        
+        # Если скалярное произведение положительное, грань видна с позиции камеры
+        return dot_product > 0
+    
+    def get_depth(self):
+        """Возвращает среднюю глубину треугольника (расстояние от камеры)"""
+        # Простой способ - взять среднее значение Z координат всех вершин
+        return (self.vertices[0].z + self.vertices[1].z + self.vertices[2].z) / 3.0
+    
+    def calculate_shading(self, light_position, shading_method="flat", camera_position=None):
+        """Рассчитывает цвет треугольника на основе освещения"""
+        if self.normal is None:
+            self.calculate_normal()
+            
+        # Направление света (от точки на треугольнике к источнику света)
+        center = Vector3D(
+            (self.vertices[0].x + self.vertices[1].x + self.vertices[2].x) / 3.0,
+            (self.vertices[0].y + self.vertices[1].y + self.vertices[2].y) / 3.0,
+            (self.vertices[0].z + self.vertices[1].z + self.vertices[2].z) / 3.0
+        )
+        
+        light_dir = Vector3D(
+            light_position.x - center.x,
+            light_position.y - center.y,
+            light_position.z - center.z
+        )
+        
+        # Нормализуем вектор направления света
+        light_len = math.sqrt(light_dir.x**2 + light_dir.y**2 + light_dir.z**2)
+        if light_len > 1e-6:
+            light_dir.x /= light_len
+            light_dir.y /= light_len
+            light_dir.z /= light_len
+        
+        # Вычисляем коэффициент диффузного отражения (косинус угла между нормалью и направлением света)
+        diffuse = max(0, self.normal.x * light_dir.x + self.normal.y * light_dir.y + self.normal.z * light_dir.z)
+        
+        # Для метода Фонга дополнительно вычисляем отраженный свет и взгляд наблюдателя
+        if shading_method == "phong" and camera_position is not None:
+            # Вектор отражения света (отраженный луч)
+            reflect_coeff = 2.0 * (self.normal.x * light_dir.x + self.normal.y * light_dir.y + self.normal.z * light_dir.z)
+            reflect = Vector3D(
+                self.normal.x * reflect_coeff - light_dir.x,
+                self.normal.y * reflect_coeff - light_dir.y,
+                self.normal.z * reflect_coeff - light_dir.z
+            )
+            
+            # Вектор взгляда (от точки на треугольнике к камере)
+            view = Vector3D(
+                camera_position.x - center.x,
+                camera_position.y - center.y,
+                camera_position.z - center.z
+            )
+            
+            # Нормализуем вектор взгляда
+            view_len = math.sqrt(view.x**2 + view.y**2 + view.z**2)
+            if view_len > 1e-6:
+                view.x /= view_len
+                view.y /= view_len
+                view.z /= view_len
+            
+            # Вычисляем коэффициент зеркального отражения (косинус угла между отраженным лучом и взглядом)
+            specular = max(0, reflect.x * view.x + reflect.y * view.y + reflect.z * view.z) ** 20
+            
+            # Итоговое освещение: рассеянный + зеркальный компоненты
+            light_intensity = min(1.0, 0.2 + diffuse * 0.5 + specular * 0.3)
+        else:
+            # Для плоского затенения или затенения Гуро используем только диффузную компоненту
+            light_intensity = min(1.0, 0.2 + diffuse * 0.8)  # Добавляем фоновое освещение 0.2
+        
+        # Возвращаем интенсивность освещения
+        return light_intensity
 
 class Matrix4x4:
     @staticmethod
@@ -206,8 +295,18 @@ class Matrix4x4:
         # Возвращаем результат
         return rotation @ translation
 
+class Light:
+    def __init__(self, position=None):
+        # Если позиция не указана, устанавливаем источник света над сценой по умолчанию
+        if position is None:
+            self.position = Vector3D(0, -200, 200)
+        else:
+            self.position = position
+        self.color = QColor(255, 255, 255)  # Белый цвет по умолчанию
+        self.intensity = 1.0  # Интенсивность по умолчанию
+
 class Letter3D:
-    def __init__(self, letter_type, width=100, height=100, depth=20):
+    def __init__(self, letter_type, width=100, height=100, depth=20, color=None):
         self.letter_type = letter_type  # 'Б' или 'З'
         self.width = width
         self.height = height
@@ -218,9 +317,17 @@ class Letter3D:
         self.transform_matrix = Matrix4x4.identity()
         self.vertices = []
         self.edges = []
+        self.triangles = []  # Добавляем список треугольников для закрашивания
         self.x_flipped = False
         self.y_flipped = False
         self.z_flipped = False
+        self.color = color if color else QColor(200, 200, 200)  # Цвет буквы
+        self.segments = 16  # Увеличиваем количество сегментов для лучших скруглений
+        self.update_geometry()
+    
+    def set_color(self, color):
+        """Установка цвета буквы"""
+        self.color = color
         self.update_geometry()
     
     def update_geometry(self):
@@ -229,228 +336,455 @@ class Letter3D:
         h = self.height     # высота
         d = self.depth      # глубина (толщина буквы)
         t = min(w, h) * 0.15  # толщина основных линий пропорционально минимальному размеру
+        r = t * 0.8         # радиус скругления, увеличен для лучшей визуализации
+
+        # Сбрасываем текущие верщины, рёбра и треугольники
+        self.vertices = []
+        self.edges = []
+        self.triangles = []
 
         if self.letter_type == 'Б':
-            # Создаем максимально простую букву Б - только необходимые линии
-            self.vertices = []
-            self.edges = []
-            
             # 1. Вертикальная линия слева
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/2, -d/2, -h/2),      # 0 - левый нижний
-                Vector3D(-w/2+t, -d/2, -h/2),    # 1 - правый нижний
-                Vector3D(-w/2+t, -d/2, h/2),     # 2 - правый верхний
-                Vector3D(-w/2, -d/2, h/2),       # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/2, d/2, -h/2),       # 4 - левый нижний
-                Vector3D(-w/2+t, d/2, -h/2),     # 5 - правый нижний
-                Vector3D(-w/2+t, d/2, h/2),      # 6 - правый верхний
-                Vector3D(-w/2, d/2, h/2)         # 7 - левый верхний
-            ])
+            self._add_rounded_box(
+                Vector3D(-w/2, -d/2, -h/2-7),       # левый нижний передний
+                Vector3D(-w/2+t, d/2, h/2),       # правый верхний задний
+                r
+            )
             
-            # Рёбра вертикальной линии слева
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-
             # 2. Верхняя горизонтальная линия
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/2+t, -d/2, h/2-t),   # 0 - левый нижний
-                Vector3D(w/2, -d/2, h/2-t),      # 1 - правый нижний
-                Vector3D(w/2, -d/2, h/2),        # 2 - правый верхний
-                Vector3D(-w/2+t, -d/2, h/2),     # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/2+t, d/2, h/2-t),    # 4 - левый нижний
-                Vector3D(w/2, d/2, h/2-t),       # 5 - правый нижний
-                Vector3D(w/2, d/2, h/2),         # 6 - правый верхний
-                Vector3D(-w/2+t, d/2, h/2)       # 7 - левый верхний
-            ])
+            self._add_rounded_box(
+                Vector3D(-w/2+t, -d/2, h/2-t),    # левый нижний передний
+                Vector3D(35, d/2, h/2),          # правый верхний задний
+                r
+            )
             
-            # Рёбра верхней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
+            #3. Средняя горизонтальная линия
+            self._add_rounded_box(
+                Vector3D(-w/2+t, -d/2, 0 - t/2),  # левый нижний передний
+                Vector3D(0, d/2, 0 + t/2),        # правый верхний задний
+                r
+            )
+            
+            # 4. Полуокружность
+            radius = h/4
+            center_x = 1.5 # Центр справа от средней линии
+            center_z = -h/4       # Центр на уровне средней линии
+            
+            # Создаем полуокружность, повернутую на 90 градусов против часовой стрелки
+            self._add_arc_segment_around_z(
+                Vector3D(center_x, -d/2, center_z),  # центр передней полуокружности
+                Vector3D(center_x, d/2, center_z),   # центр задней полуокружности
+                radius, t, -90, 90  # Полукруг, открывающийся влево (повернутый на 90° против часовой)
+            )
 
-            # 3. Средняя горизонтальная линия
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/2+t, -d/2, 0),       # 0 - левый нижний
-                Vector3D(w/2, -d/2, 0),          # 1 - правый нижний
-                Vector3D(w/2, -d/2, t),          # 2 - правый верхний
-                Vector3D(-w/2+t, -d/2, t),       # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/2+t, d/2, 0),        # 4 - левый нижний
-                Vector3D(w/2, d/2, 0),           # 5 - правый нижний
-                Vector3D(w/2, d/2, t),           # 6 - правый верхний
-                Vector3D(-w/2+t, d/2, t)         # 7 - левый верхний
-            ])
-            
-            # Рёбра средней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-                
-            # 4. Вертикальная линия справа (нижняя часть)
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(w/2-t, -d/2, -h/2),      # 0 - левый нижний
-                Vector3D(w/2, -d/2, -h/2),        # 1 - правый нижний
-                Vector3D(w/2, -d/2, 0),           # 2 - правый верхний
-                Vector3D(w/2-t, -d/2, 0),         # 3 - левый верхний
-                # Задняя грань
-                Vector3D(w/2-t, d/2, -h/2),       # 4 - левый нижний
-                Vector3D(w/2, d/2, -h/2),         # 5 - правый нижний
-                Vector3D(w/2, d/2, 0),            # 6 - правый верхний
-                Vector3D(w/2-t, d/2, 0)           # 7 - левый верхний
-            ])
-            
-            # Рёбра вертикальной линии справа (нижняя часть)
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-                
-            # 5. Нижняя горизонтальная линия (параллелепипед)
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/2+t, -d/2, -h/2),     # 0 - левый нижний
-                Vector3D(w/2-t, -d/2, -h/2),      # 1 - правый нижний
-                Vector3D(w/2-t, -d/2, -h/2+t),    # 2 - правый верхний
-                Vector3D(-w/2+t, -d/2, -h/2+t),   # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/2+t, d/2, -h/2),      # 4 - левый нижний
-                Vector3D(w/2-t, d/2, -h/2),       # 5 - правый нижний
-                Vector3D(w/2-t, d/2, -h/2+t),     # 6 - правый верхний
-                Vector3D(-w/2+t, d/2, -h/2+t)     # 7 - левый верхний
-            ])
-            
-            # Рёбра нижней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
+            #5. Нижняя горизонтальная линия
+            self._add_rounded_box(
+                Vector3D(-w/2+t, -d/2, -h/2-7),  # левый нижний передний
+                Vector3D(0, d/2, -h/2-7+t),        # правый верхний задний
+                r
+            )
 
         elif self.letter_type == 'З':
-            # Создаем максимально простую букву З - только необходимые линии
-            self.vertices = []
-            self.edges = []
+            # Используем полуокружности для буквы З, убираем лишние прямоугольники
+            t_half = t/2
             
-            # 1. Верхняя горизонтальная линия
-            v_offset = len(self.vertices)
-            self.vertices.extend([
+            # Верхняя полуокружность (открыта вверх) с удлиненной верхней частью
+            radius_top = h/4
+            extension_factor_top = 1.3  # Коэффициент удлинения верхней части
+            center_top_x = 0  # Центр в середине
+            center_top_z = h/4
+            
+            # Изменяем диапазон углов для верхней полуокружности
+            # делаем верхнюю часть (от 270 до 360) длиннее на коэффициент extension_factor_top
+            start_angle_top = 270  # Начальный угол не меняется
+            end_angle_top = 360 + (450 - 360) * extension_factor_top  # Удлиняем верхнюю часть
+            
+            self._add_arc_segment_around_z(
+                Vector3D(center_top_x, -d/2, center_top_z),  # центр передней полуокружности
+                Vector3D(center_top_x, d/2, center_top_z),   # центр задней полуокружности
+                radius_top, t, start_angle_top, end_angle_top  # Полукруг с удлиненной верхней частью
+            )
+            
+            # Нижняя полуокружность (открыта вверх) с удлиненной нижней частью
+            radius_bottom = h/4
+            extension_factor_bottom = 0.55  # Коэффициент удлинения нижней части - такой же как у верхней полуокружности
+            center_bottom_x = 0  # Центр в середине
+            center_bottom_z = -h/4
+            
+            # Изменяем диапазон углов для нижней полуокружности
+            # делаем нижнюю часть зеркальной верхней части верхней полуокружности
+            base_angle_bottom = 180  # Фиксированный начальный угол (левая точка)
+            mid_angle = 270  # Середина (нижняя точка)
+            # Так как верхний угол увеличен с 360-270=90 до 90*1.3=117,
+            # нижний угол должен быть соответственно увеличен с 270-180=90 до 90*1.3=117
+            # Поэтому start_angle_bottom = 270 - 117 = 153
+            start_angle_bottom = mid_angle - (mid_angle - base_angle_bottom) * extension_factor_bottom
+            end_angle_bottom = 450  # Конечный угол не меняется
+            
+            self._add_arc_segment_around_z(
+                Vector3D(center_bottom_x, -d/2, center_bottom_z),  # центр передней полуокружности
+                Vector3D(center_bottom_x, d/2, center_bottom_z),   # центр задней полуокружности
+                radius_bottom, t, start_angle_bottom, end_angle_bottom  # Полукруг с удлиненной нижней частью
+            )
+            
+            # Средняя горизонтальная линия (центрирована)
+            self._add_rounded_box(
+                Vector3D(-w/6, -d/2, -t_half),     # левый нижний передний
+                Vector3D(w/6, d/2, t_half),        # правый верхний задний
+                r
+            )
+    
+    def _add_arc_segment_around_z(self, front_center, back_center, radius, thickness, start_angle, end_angle):
+        """Добавляет сегмент арки вокруг оси Z (в плоскости XY)"""
+        # Создаем внутренний и внешний радиусы
+        inner_radius = radius - thickness/2
+        outer_radius = radius + thickness/2
+        
+        # Вычисляем вершины для внутренней и внешней дуги
+        vertices_front_inner = []
+        vertices_front_outer = []
+        vertices_back_inner = []
+        vertices_back_outer = []
+        
+        # Вычисляем вершины
+        for i in range(self.segments + 1):
+            angle = start_angle + (end_angle - start_angle) * (i / self.segments)
+            angle_rad = math.radians(angle)
+            
+            # Вычисляем косинус и синус для точки на окружности
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            
+            # Фронтальная грань внутренняя точка (в плоскости XY)
+            x_inner = front_center.x + inner_radius * cos_a
+            y_inner = front_center.y
+            z_inner = front_center.z + inner_radius * sin_a
+            vertices_front_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, y_inner, z_inner))
+            
+            # Фронтальная грань внешняя точка
+            x_outer = front_center.x + outer_radius * cos_a
+            y_outer = front_center.y
+            z_outer = front_center.z + outer_radius * sin_a
+            vertices_front_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, y_outer, z_outer))
+            
+            # Задняя грань внутренняя точка
+            vertices_back_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, back_center.y, z_inner))
+            
+            # Задняя грань внешняя точка
+            vertices_back_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, back_center.y, z_outer))
+        
+        # Создаем треугольники и рёбра
+        for i in range(self.segments):
+            # Фронтальная грань (два треугольника для четырехугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.vertices[vertices_front_inner[i+1]],
+                self.color
+            ))
+            
+            # Задняя грань (два треугольника для четырехугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_back_outer[i]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.color
+            ))
+            
+            # Верхняя грань (внешняя часть дуги)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.color
+            ))
+            
+            # Нижняя грань (внутренняя часть дуги)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_inner[i]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_inner[i+1]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.color
+            ))
+            
+            # Добавляем рёбра (контур)
+            self.edges.append((vertices_front_inner[i], vertices_front_inner[i+1]))
+            self.edges.append((vertices_front_outer[i], vertices_front_outer[i+1]))
+            self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
+            self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
+    
+    def _add_arc_segment(self, front_center, back_center, radius, thickness, start_angle, end_angle):
+        """Добавляет сегмент арки в плоскости XZ"""
+        # Этот метод оставляем для совместимости, но он не используется в текущей реализации
+        # Создаем внутренний и внешний радиусы
+        inner_radius = radius - thickness/2
+        outer_radius = radius + thickness/2
+        
+        # Вычисляем вершины для внутренней и внешней дуги
+        vertices_front_inner = []
+        vertices_front_outer = []
+        vertices_back_inner = []
+        vertices_back_outer = []
+        
+        # Вычисляем вершины
+        for i in range(self.segments + 1):
+            angle = start_angle + (end_angle - start_angle) * (i / self.segments)
+            angle_rad = math.radians(angle)
+            
+            # Вычисляем косинус и синус для точки на окружности
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            
+            # Фронтальная грань внутренняя точка
+            x_inner = front_center.x + inner_radius * cos_a
+            z_inner = front_center.z + inner_radius * sin_a
+            vertices_front_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, front_center.y, z_inner))
+            
+            # Фронтальная грань внешняя точка
+            x_outer = front_center.x + outer_radius * cos_a
+            z_outer = front_center.z + outer_radius * sin_a
+            vertices_front_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, front_center.y, z_outer))
+            
+            # Задняя грань внутренняя точка
+            vertices_back_inner.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_inner, back_center.y, z_inner))
+            
+            # Задняя грань внешняя точка
+            vertices_back_outer.append(len(self.vertices))
+            self.vertices.append(Vector3D(x_outer, back_center.y, z_outer))
+        
+        # Создаем треугольники и рёбра
+        for i in range(self.segments):
+            # Фронтальная грань (два треугольника для четырехугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.vertices[vertices_front_inner[i+1]],
+                self.color
+            ))
+            
+            # Задняя грань (два треугольника для четырехугольника)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_back_outer[i]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_back_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.color
+            ))
+            
+            # Верхняя грань (внешняя часть дуги)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_outer[i]],
+                self.vertices[vertices_back_outer[i+1]],
+                self.vertices[vertices_front_outer[i+1]],
+                self.color
+            ))
+            
+            # Нижняя грань (внутренняя часть дуги)
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.vertices[vertices_back_inner[i]],
+                self.color
+            ))
+            
+            self.triangles.append(Triangle(
+                self.vertices[vertices_front_inner[i]],
+                self.vertices[vertices_front_inner[i+1]],
+                self.vertices[vertices_back_inner[i+1]],
+                self.color
+            ))
+            
+            # Добавляем рёбра (контур)
+            self.edges.append((vertices_front_inner[i], vertices_front_inner[i+1]))
+            self.edges.append((vertices_front_outer[i], vertices_front_outer[i+1]))
+            self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
+            self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
+    
+    def _add_rounded_box(self, min_point, max_point, corner_radius):
+        """Добавляет параллелепипед со скругленными углами"""
+        # Стандартное добавление основного блока без скруглений
+        self._add_box(
+            min_point,
+            max_point
+        )
+    
+    def _add_box(self, min_point, max_point):
+        """Добавляет параллелепипед (прямоугольный блок) к 3D модели"""
+        # Вычисляем все 8 вершин параллелепипеда
+        v_offset = len(self.vertices)
+        
+        # Передняя грань (y = min_y)
+        self.vertices.append(Vector3D(min_point.x, min_point.y, min_point.z))  # 0: левый нижний
+        self.vertices.append(Vector3D(max_point.x, min_point.y, min_point.z))  # 1: правый нижний
+        self.vertices.append(Vector3D(max_point.x, min_point.y, max_point.z))  # 2: правый верхний
+        self.vertices.append(Vector3D(min_point.x, min_point.y, max_point.z))  # 3: левый верхний
+        
+        # Задняя грань (y = max_y)
+        self.vertices.append(Vector3D(min_point.x, max_point.y, min_point.z))  # 4: левый нижний
+        self.vertices.append(Vector3D(max_point.x, max_point.y, min_point.z))  # 5: правый нижний
+        self.vertices.append(Vector3D(max_point.x, max_point.y, max_point.z))  # 6: правый верхний
+        self.vertices.append(Vector3D(min_point.x, max_point.y, max_point.z))  # 7: левый верхний
+        
+        # Добавляем рёбра для параллелепипеда
                 # Передняя грань
-                Vector3D(-w/2, -d/2, h/2-t),     # 0 - левый нижний
-                Vector3D(w/2, -d/2, h/2-t),      # 1 - правый нижний
-                Vector3D(w/2, -d/2, h/2),        # 2 - правый верхний
-                Vector3D(-w/2, -d/2, h/2),       # 3 - левый верхний
+        self.edges.append((v_offset+0, v_offset+1))
+        self.edges.append((v_offset+1, v_offset+2))
+        self.edges.append((v_offset+2, v_offset+3))
+        self.edges.append((v_offset+3, v_offset+0))
+        
                 # Задняя грань
-                Vector3D(-w/2, d/2, h/2-t),      # 4 - левый нижний
-                Vector3D(w/2, d/2, h/2-t),       # 5 - правый нижний
-                Vector3D(w/2, d/2, h/2),         # 6 - правый верхний
-                Vector3D(-w/2, d/2, h/2)         # 7 - левый верхний
-            ])
-            
-            # Рёбра верхней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-
-            # 2. Средняя горизонтальная линия
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/4, -d/2, -t/2),      # 0 - левый нижний
-                Vector3D(w/2, -d/2, -t/2),       # 1 - правый нижний
-                Vector3D(w/2, -d/2, t/2),        # 2 - правый верхний
-                Vector3D(-w/4, -d/2, t/2),       # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/4, d/2, -t/2),       # 4 - левый нижний
-                Vector3D(w/2, d/2, -t/2),        # 5 - правый нижний
-                Vector3D(w/2, d/2, t/2),         # 6 - правый верхний
-                Vector3D(-w/4, d/2, t/2)         # 7 - левый верхний
-            ])
-            
-            # Рёбра средней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-
-            # 3. Нижняя горизонтальная линия
-            v_offset = len(self.vertices)
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(-w/2, -d/2, -h/2),      # 0 - левый нижний
-                Vector3D(w/2, -d/2, -h/2),       # 1 - правый нижний
-                Vector3D(w/2, -d/2, -h/2+t),     # 2 - правый верхний
-                Vector3D(-w/2, -d/2, -h/2+t),    # 3 - левый верхний
-                # Задняя грань
-                Vector3D(-w/2, d/2, -h/2),       # 4 - левый нижний
-                Vector3D(w/2, d/2, -h/2),        # 5 - правый нижний
-                Vector3D(w/2, d/2, -h/2+t),      # 6 - правый верхний
-                Vector3D(-w/2, d/2, -h/2+t)      # 7 - левый верхний
-            ])
-            
-            # Рёбра нижней горизонтальной линии
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-
-            # 4. Правая вертикальная линия (верхняя часть)
-            v_offset = len(self.vertices)
-            top_vertical_offset = v_offset  # запоминаем для соединения
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(w/2-t, -d/2, h/2-t),    # 0 - левый нижний
-                Vector3D(w/2, -d/2, h/2-t),      # 1 - правый нижний
-                Vector3D(w/2, -d/2, t/2),        # 2 - правый верхний
-                Vector3D(w/2-t, -d/2, t/2),      # 3 - левый верхний
-                # Задняя грань
-                Vector3D(w/2-t, d/2, h/2-t),     # 4 - левый нижний
-                Vector3D(w/2, d/2, h/2-t),       # 5 - правый нижний
-                Vector3D(w/2, d/2, t/2),         # 6 - правый верхний
-                Vector3D(w/2-t, d/2, t/2)        # 7 - левый верхний
-            ])
-            
-            # Рёбра правой вертикальной линии (верхняя часть)
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
-
-            # 5. Правая вертикальная линия (нижняя часть)
-            v_offset = len(self.vertices)
-            bottom_vertical_offset = v_offset  # запоминаем для соединения
-            self.vertices.extend([
-                # Передняя грань
-                Vector3D(w/2-t, -d/2, -t/2),     # 0 - левый нижний
-                Vector3D(w/2, -d/2, -t/2),       # 1 - правый нижний
-                Vector3D(w/2, -d/2, -h/2+t),     # 2 - правый верхний
-                Vector3D(w/2-t, -d/2, -h/2+t),   # 3 - левый верхний
-                # Задняя грань
-                Vector3D(w/2-t, d/2, -t/2),      # 4 - левый нижний
-                Vector3D(w/2, d/2, -t/2),        # 5 - правый нижний
-                Vector3D(w/2, d/2, -h/2+t),      # 6 - правый верхний
-                Vector3D(w/2-t, d/2, -h/2+t)     # 7 - левый верхний
-            ])
-            
-            # Рёбра правой вертикальной линии (нижняя часть)
-            for i in range(4):
-                self.edges.append((v_offset+i, v_offset+((i+1)%4))) # передняя грань
-                self.edges.append((v_offset+i+4, v_offset+((i+1)%4)+4)) # задняя грань
-                self.edges.append((v_offset+i, v_offset+i+4)) # соединения
+        self.edges.append((v_offset+4, v_offset+5))
+        self.edges.append((v_offset+5, v_offset+6))
+        self.edges.append((v_offset+6, v_offset+7))
+        self.edges.append((v_offset+7, v_offset+4))
+        
+        # Соединения
+        self.edges.append((v_offset+0, v_offset+4))
+        self.edges.append((v_offset+1, v_offset+5))
+        self.edges.append((v_offset+2, v_offset+6))
+        self.edges.append((v_offset+3, v_offset+7))
+        
+        # Добавляем треугольники для параллелепипеда
+        # Используем цвет буквы
+        
+        # Передняя грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+1], 
+            self.vertices[v_offset+2], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+2], 
+            self.vertices[v_offset+3], 
+            self.color
+        ))
+        
+        # Задняя грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+4], 
+            self.vertices[v_offset+6], 
+            self.vertices[v_offset+5], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+4], 
+            self.vertices[v_offset+7], 
+            self.vertices[v_offset+6], 
+            self.color
+        ))
+        
+        # Верхняя грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+3], 
+            self.vertices[v_offset+2], 
+            self.vertices[v_offset+6], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+3], 
+            self.vertices[v_offset+6], 
+            self.vertices[v_offset+7], 
+            self.color
+        ))
+        
+        # Нижняя грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+5], 
+            self.vertices[v_offset+1], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+4], 
+            self.vertices[v_offset+5], 
+            self.color
+        ))
+        
+        # Левая грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+3], 
+            self.vertices[v_offset+7], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+0], 
+            self.vertices[v_offset+7], 
+            self.vertices[v_offset+4], 
+            self.color
+        ))
+        
+        # Правая грань (2 треугольника)
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+1], 
+            self.vertices[v_offset+5], 
+            self.vertices[v_offset+6], 
+            self.color
+        ))
+        self.triangles.append(Triangle(
+            self.vertices[v_offset+1], 
+            self.vertices[v_offset+6], 
+            self.vertices[v_offset+2], 
+            self.color
+        ))
 
     def set_dimensions(self, width, height, depth):
         self.width = width
@@ -584,6 +918,121 @@ class Renderer:
         
         return (screen_x, screen_y)
 
+class ZBuffer:
+    def __init__(self, width, height):
+        """Инициализация Z-буфера с заданными размерами"""
+        self.width = width
+        self.height = height
+        self.clear_buffer()
+        
+    def clear_buffer(self):
+        """Очистка Z-буфера (установка максимальной глубины для всех пикселей)"""
+        self.buffer = np.full((self.height, self.width), np.inf, dtype=np.float64)
+        self.color_buffer = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+        
+    def resize(self, width, height):
+        """Изменение размера Z-буфера"""
+        self.width = width
+        self.height = height
+        self.clear_buffer()
+    
+    def set_pixel(self, x, y, z, color):
+        """Установка пикселя, если его z-координата меньше текущего значения в буфере"""
+        # Проверяем, находится ли пиксель в пределах буфера
+        if 0 <= x < self.width and 0 <= y < self.height:
+            if z < self.buffer[y, x]:
+                self.buffer[y, x] = z
+                self.color_buffer[y, x] = [color.red(), color.green(), color.blue(), color.alpha()]
+                return True
+        return False
+    
+    def fill_triangle(self, triangle, screen_coords, colors):
+        """Закрашивание треугольника с использованием Z-буфера"""
+        # Находим границы треугольника на экране
+        min_x = max(0, min(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
+        max_x = min(self.width - 1, max(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
+        min_y = max(0, min(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
+        max_y = min(self.height - 1, max(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
+        
+        # Конвертируем в целые числа
+        min_x, max_x = int(min_x), int(max_x)
+        min_y, max_y = int(min_y), int(max_y)
+        
+        # Получаем вершины треугольника и их z-координаты
+        v0, v1, v2 = screen_coords
+        z0, z1, z2 = triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z
+        
+        # Перебираем пиксели в рамках прямоугольника, содержащего треугольник
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                # Вычисляем барицентрические координаты для определения, находится ли точка внутри треугольника
+                # и для интерполяции z-координаты и цвета
+                w0, w1, w2 = self._barycentric_coords(v0, v1, v2, (x, y))
+                
+                # Если точка находится внутри треугольника
+                if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                    # Интерполируем z-координату
+                    z = w0 * z0 + w1 * z1 + w2 * z2
+                    
+                    # Интерполируем цвет
+                    if colors is not None:
+                        r = int(w0 * colors[0].red() + w1 * colors[1].red() + w2 * colors[2].red())
+                        g = int(w0 * colors[0].green() + w1 * colors[1].green() + w2 * colors[2].green())
+                        b = int(w0 * colors[0].blue() + w1 * colors[1].blue() + w2 * colors[2].blue())
+                        a = int(w0 * colors[0].alpha() + w1 * colors[1].alpha() + w2 * colors[2].alpha())
+                        color = QColor(r, g, b, a)
+                    else:
+                        color = triangle.color
+                    
+                    # Устанавливаем пиксель, если он ближе
+                    self.set_pixel(x, y, z, color)
+    
+    def _barycentric_coords(self, v0, v1, v2, p):
+        """Вычисление барицентрических координат точки p относительно треугольника (v0, v1, v2)"""
+        # Конвертируем в float для точности вычислений
+        v0 = (float(v0[0]), float(v0[1]))
+        v1 = (float(v1[0]), float(v1[1]))
+        v2 = (float(v2[0]), float(v2[1]))
+        p = (float(p[0]), float(p[1]))
+        
+        # Вычисляем векторы
+        v0v1 = (v1[0] - v0[0], v1[1] - v0[1])
+        v0v2 = (v2[0] - v0[0], v2[1] - v0[1])
+        v0p = (p[0] - v0[0], p[1] - v0[1])
+        
+        # Вычисляем определители для барицентрических координат
+        d00 = v0v1[0] * v0v1[0] + v0v1[1] * v0v1[1]
+        d01 = v0v1[0] * v0v2[0] + v0v1[1] * v0v2[1]
+        d11 = v0v2[0] * v0v2[0] + v0v2[1] * v0v2[1]
+        d20 = v0p[0] * v0v1[0] + v0p[1] * v0v1[1]
+        d21 = v0p[0] * v0v2[0] + v0p[1] * v0v2[1]
+        
+        # Вычисляем барицентрические координаты
+        denom = d00 * d11 - d01 * d01
+        # Защита от деления на ноль
+        if abs(denom) < 1e-6:
+            return (-1, -1, -1)  # Вырожденный треугольник
+            
+        v = (d11 * d20 - d01 * d21) / denom
+        w = (d00 * d21 - d01 * d20) / denom
+        u = 1.0 - v - w
+        
+        return (u, v, w)
+    
+    def render_to_image(self):
+        """Создает QImage из текущего состояния цветового буфера"""
+        image = QImage(self.width, self.height, QImage.Format_RGBA8888)
+        
+        # Заполняем изображение данными из цветового буфера
+        for y in range(self.height):
+            for x in range(self.width):
+                # Если пиксель не был установлен, он остается прозрачным
+                if self.buffer[y, x] != np.inf:
+                    c = self.color_buffer[y, x]
+                    image.setPixelColor(x, y, QColor(c[0], c[1], c[2], c[3]))
+        
+        return image
+
 class Canvas3D(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -596,10 +1045,10 @@ class Canvas3D(QWidget):
         self.setPalette(palette)
         
         # Инициализируем две буквы с размерами по умолчанию
-        self.letter1 = Letter3D('Б', 100, 100, 20)
+        self.letter1 = Letter3D('Б', 100, 100, 20, QColor(0, 255, 0))  # Зеленый цвет
         self.letter1.position.x = -60  # Смещаем первую букву влево
         
-        self.letter2 = Letter3D('З', 100, 100, 20)
+        self.letter2 = Letter3D('З', 100, 100, 20, QColor(255, 255, 0))  # Желтый цвет
         self.letter2.position.x = 60   # Смещаем вторую букву вправо
         
         # Инициализируем камеру
@@ -623,6 +1072,15 @@ class Canvas3D(QWidget):
         self.camera.update_projection_matrix()
         self.letter1.update_transform()
         self.letter2.update_transform()
+        
+        # Инициализация Z-буфера
+        self.z_buffer = ZBuffer(self.width(), self.height())
+        
+        # Инициализация источника света
+        self.light = Light()
+        
+        # Режим отображения: 'wireframe', 'flat', 'gouraud', 'phong'
+        self.render_mode = 'flat'
     
     def initialize_axes(self):
         """Инициализация осей координат"""
@@ -654,11 +1112,25 @@ class Canvas3D(QWidget):
         self.initialize_axes()
         self.update()
     
+    def set_render_mode(self, mode):
+        """Установка режима отображения"""
+        self.render_mode = mode
+        self.update()
+    
+    def set_light_position(self, x, y, z):
+        """Установка позиции источника света"""
+        self.light.position = Vector3D(x, y, z)
+        self.update()
+    
     def resizeEvent(self, event):
         # При изменении размера обновляем соотношение сторон и рендерер
         self.camera.aspect_ratio = self.width() / max(self.height(), 1)
         self.camera.update_projection_matrix()
         self.renderer = Renderer(self.width(), self.height())
+        
+        # Обновляем размер Z-буфера
+        self.z_buffer.resize(self.width(), self.height())
+        
         super().resizeEvent(event)
     
     def paintEvent(self, event):
@@ -669,16 +1141,90 @@ class Canvas3D(QWidget):
         view_matrix = self.camera.view_matrix
         projection_matrix = self.camera.projection_matrix
         
+        # Очищаем Z-буфер перед отрисовкой
+        self.z_buffer.clear_buffer()
+        
+        # Если режим отображения - каркасный, рисуем как раньше
+        if self.render_mode == 'wireframe':
         # Отрисовка мировых осей координат (всегда)
-        self.draw_world_axes(painter, view_matrix, projection_matrix)
+            self.draw_world_axes(painter, view_matrix, projection_matrix)
         
         # Рисуем первую букву
-        self.draw_letter(painter, self.letter1, view_matrix, projection_matrix, QColor(0, 255, 0))
+            self.draw_letter_wireframe(painter, self.letter1, view_matrix, projection_matrix, QColor(0, 255, 0))
         
         # Рисуем вторую букву
-        self.draw_letter(painter, self.letter2, view_matrix, projection_matrix, QColor(255, 255, 0))
+            self.draw_letter_wireframe(painter, self.letter2, view_matrix, projection_matrix, QColor(255, 255, 0))
+            
+            # Отображаем источник света
+            self.draw_light(painter, self.light, view_matrix, projection_matrix)
+        else:
+            # Используем Z-буфер для отрисовки
+            self.draw_with_z_buffer(painter, view_matrix, projection_matrix)
+            
+            # Всегда рисуем оси и источник света поверх остального
+            self.draw_world_axes(painter, view_matrix, projection_matrix)
+            self.draw_light(painter, self.light, view_matrix, projection_matrix)
+        
+        # Завершаем работу с QPainter
+        painter.end()
     
-    def draw_letter(self, painter, letter, view_matrix, projection_matrix, color):
+    def draw_with_z_buffer(self, painter, view_matrix, projection_matrix):
+        """Отрисовка сцены с использованием Z-буфера"""
+        # Преобразуем треугольники букв в экранные координаты
+        triangles = []
+        
+        # Добавляем треугольники первой буквы
+        for triangle in self.letter1.triangles:
+            transformed_triangle = triangle.transform(self.letter1.transform_matrix)
+            triangles.append((transformed_triangle, self.letter1.color))
+        
+        # Добавляем треугольники второй буквы
+        for triangle in self.letter2.triangles:
+            transformed_triangle = triangle.transform(self.letter2.transform_matrix)
+            triangles.append((transformed_triangle, self.letter2.color))
+        
+        # Закрашиваем все треугольники с учетом Z-буфера
+        for triangle, base_color in triangles:
+            # Проверяем, виден ли треугольник с позиции камеры
+            if triangle.is_visible(self.camera.position):
+                # Получаем экранные координаты вершин
+                screen_coords = []
+                for vertex in triangle.vertices:
+                    screen_coord = self.renderer.project_vertex(vertex, np.identity(4), view_matrix, projection_matrix)
+                    screen_coords.append(screen_coord)
+                
+                # Вычисляем цвет треугольника на основе освещения
+                if self.render_mode in ['flat', 'gouraud', 'phong']:
+                    # Вычисляем нормаль к треугольнику для освещения
+                    light_intensity = triangle.calculate_shading(
+                        self.light.position, 
+                        self.render_mode,
+                        self.camera.position if self.render_mode == 'phong' else None
+                    )
+                    
+                    # Модифицируем базовый цвет с учетом освещения
+                    r = min(255, int(base_color.red() * light_intensity))
+                    g = min(255, int(base_color.green() * light_intensity))
+                    b = min(255, int(base_color.blue() * light_intensity))
+                    color = QColor(r, g, b)
+                    
+                    # Заполняем треугольник в Z-буфере
+                    if self.render_mode == 'flat':
+                        # Для плоского затенения используем один цвет для всего треугольника
+                        colors = [color, color, color]
+                    else:
+                        # Для методов Гуро и Фонга нужно вычислить освещение для каждой вершины
+                        # В данной реализации, упрощаем, используя один цвет
+                        colors = [color, color, color]
+                    
+                    self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+        
+        # Создаем изображение из Z-буфера и отображаем его
+        image = self.z_buffer.render_to_image()
+        painter.drawImage(0, 0, image)
+    
+    def draw_letter_wireframe(self, painter, letter, view_matrix, projection_matrix, color):
+        """Отрисовка буквы в каркасном режиме"""
         # Настройка пера для рисования буквы
         painter.setPen(QPen(color, 2))
         
@@ -708,6 +1254,7 @@ class Canvas3D(QWidget):
         painter.drawEllipse(screen_origin[0] - 3, screen_origin[1] - 3, 6, 6)
     
     def draw_world_axes(self, painter, view_matrix, projection_matrix):
+        """Отрисовка мировых осей координат"""
         # Используем единичную матрицу для модельных преобразований
         model_matrix = Matrix4x4.identity()
         
@@ -729,13 +1276,28 @@ class Canvas3D(QWidget):
             # Подписываем оси буквами
             axis_labels = ["X", "Y", "Z"]
             painter.drawText(end[0] + 5, end[1] + 5, axis_labels[i])
+    
+    def draw_light(self, painter, light, view_matrix, projection_matrix):
+        """Отрисовка источника света"""
+        # Проецируем позицию источника света, используя только матрицы вида и проекции
+        # без применения дополнительных трансформаций
+        light_position = Vector3D(light.position.x, light.position.y, light.position.z)
+        screen_position = self.renderer.project_vertex(light_position, np.identity(4), view_matrix, projection_matrix)
+        
+        # Рисуем источник света как яркий круг
+        painter.setBrush(QColor(255, 255, 200))  # Светло-желтый цвет для источника света
+        painter.setPen(QPen(QColor(255, 255, 0), 1))
+        painter.drawEllipse(screen_position[0] - 5, screen_position[1] - 5, 10, 10)
+        
+        # Добавляем подпись
+        painter.drawText(screen_position[0] + 10, screen_position[1], "Свет")
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
         self.setWindowTitle("3D Буквы Б и З - Лабораторная работа №2")
-        self.resize(1000, 700)
+        self.resize(1200, 700)
         
         # Создаем центральный виджет и его компоновку
         central_widget = QWidget()
@@ -754,9 +1316,13 @@ class MainWindow(QMainWindow):
         letter1_panel = self.create_letter_panel(1)
         letter2_panel = self.create_letter_panel(2)
         
+        # Создаем вкладку для настройки отображения
+        render_panel = self.create_render_panel()
+        
         # Добавляем панели управления на вкладки
         tabs.addTab(letter1_panel, "Буква Б")
         tabs.addTab(letter2_panel, "Буква З")
+        tabs.addTab(render_panel, "Отображение")
         
         # Создаем панель управления камерой
         camera_panel = self.create_camera_panel()
@@ -775,6 +1341,43 @@ class MainWindow(QMainWindow):
         # Группа для параметров буквы
         letter_group = QGroupBox(f"Параметры буквы {letter_type}")
         letter_layout = QVBoxLayout(letter_group)
+        
+        # Добавляем выбор цвета буквы
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel("Цвет:"))
+        
+        # Кнопки для выбора базовых цветов
+        red_btn = QPushButton()
+        red_btn.setStyleSheet("background-color: red; min-width: 20px; min-height: 20px;")
+        red_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 0, 0)))
+        color_layout.addWidget(red_btn)
+        
+        green_btn = QPushButton()
+        green_btn.setStyleSheet("background-color: green; min-width: 20px; min-height: 20px;")
+        green_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 255, 0)))
+        color_layout.addWidget(green_btn)
+        
+        blue_btn = QPushButton()
+        blue_btn.setStyleSheet("background-color: blue; min-width: 20px; min-height: 20px;")
+        blue_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 0, 255)))
+        color_layout.addWidget(blue_btn)
+        
+        yellow_btn = QPushButton()
+        yellow_btn.setStyleSheet("background-color: yellow; min-width: 20px; min-height: 20px;")
+        yellow_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 255, 0)))
+        color_layout.addWidget(yellow_btn)
+        
+        cyan_btn = QPushButton()
+        cyan_btn.setStyleSheet("background-color: cyan; min-width: 20px; min-height: 20px;")
+        cyan_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 255, 255)))
+        color_layout.addWidget(cyan_btn)
+        
+        magenta_btn = QPushButton()
+        magenta_btn.setStyleSheet("background-color: magenta; min-width: 20px; min-height: 20px;")
+        magenta_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 0, 255)))
+        color_layout.addWidget(magenta_btn)
+        
+        letter_layout.addLayout(color_layout)
         
         # Размеры буквы
         size_layout = QHBoxLayout()
@@ -900,6 +1503,56 @@ class MainWindow(QMainWindow):
         setattr(self, f"width_spin_{letter_index}", width_spin)
         setattr(self, f"height_spin_{letter_index}", height_spin)
         setattr(self, f"depth_spin_{letter_index}", depth_spin)
+        
+        return panel
+    
+    def create_render_panel(self):
+        """Создает панель управления настройками отображения"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        
+        # Группа режима отображения
+        render_mode_group = QGroupBox("Режим отображения")
+        render_mode_layout = QVBoxLayout(render_mode_group)
+        
+        # Выбор режима отображения
+        self.render_mode_combo = QComboBox()
+        self.render_mode_combo.addItems(["Каркас", "Плоское закрашивание", "Метод Гуро", "Метод Фонга"])
+        self.render_mode_combo.setCurrentIndex(1)  # Плоское закрашивание по умолчанию
+        self.render_mode_combo.currentIndexChanged.connect(self.change_render_mode)
+        render_mode_layout.addWidget(self.render_mode_combo)
+        
+        layout.addWidget(render_mode_group)
+        
+        # Группа для источника света
+        light_group = QGroupBox("Источник света")
+        light_layout = QVBoxLayout(light_group)
+        
+        # X-позиция источника света
+        light_layout.addWidget(QLabel("Позиция X:"))
+        self.light_x_slider = QSlider(Qt.Horizontal)
+        self.light_x_slider.setRange(-500, 500)
+        self.light_x_slider.setValue(int(self.canvas.light.position.x))
+        self.light_x_slider.valueChanged.connect(self.update_light_position)
+        light_layout.addWidget(self.light_x_slider)
+        
+        # Y-позиция источника света
+        light_layout.addWidget(QLabel("Позиция Y:"))
+        self.light_y_slider = QSlider(Qt.Horizontal)
+        self.light_y_slider.setRange(-500, 500)
+        self.light_y_slider.setValue(int(self.canvas.light.position.y))
+        self.light_y_slider.valueChanged.connect(self.update_light_position)
+        light_layout.addWidget(self.light_y_slider)
+        
+        # Z-позиция источника света
+        light_layout.addWidget(QLabel("Позиция Z:"))
+        self.light_z_slider = QSlider(Qt.Horizontal)
+        self.light_z_slider.setRange(-500, 500)
+        self.light_z_slider.setValue(int(self.canvas.light.position.z))
+        self.light_z_slider.valueChanged.connect(self.update_light_position)
+        light_layout.addWidget(self.light_z_slider)
+        
+        layout.addWidget(light_group)
         
         return panel
     
@@ -1032,6 +1685,22 @@ class MainWindow(QMainWindow):
         getattr(self, f"height_spin_{letter_index}").setValue(new_height)
         getattr(self, f"depth_spin_{letter_index}").setValue(new_depth)
     
+    def change_render_mode(self, index):
+        """Изменение режима отображения"""
+        modes = ['wireframe', 'flat', 'gouraud', 'phong']
+        if index < len(modes):
+            self.canvas.set_render_mode(modes[index])
+    
+    def update_light_position(self):
+        """Обновление позиции источника света"""
+        # Получаем значения слайдеров
+        x = self.light_x_slider.value()
+        y = self.light_y_slider.value()
+        z = self.light_z_slider.value()
+        
+        # Устанавливаем новую позицию источника света напрямую в мировых координатах
+        self.canvas.set_light_position(x, y, z)
+    
     def rotate_camera_x(self):
         # Обновляем вращение камеры вокруг оси X
         self.canvas.camera.rotation.x = self.cam_x_slider.value()
@@ -1078,6 +1747,12 @@ class MainWindow(QMainWindow):
         # Изменение длины осей координат
         length = self.axes_length_slider.value()
         self.canvas.set_axes_length(length)
+    
+    def change_letter_color(self, letter_index, color):
+        """Изменяет цвет указанной буквы"""
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        letter.set_color(color)
+        self.canvas.update()
 
 def main():
     app = QApplication(sys.argv)
