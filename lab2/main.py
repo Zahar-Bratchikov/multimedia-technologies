@@ -77,11 +77,19 @@ class Triangle:
             camera_position.z - self.vertices[0].z
         )
         
+        # Нормализуем вектор для более точного скалярного произведения
+        v_len = math.sqrt(v_to_camera.x**2 + v_to_camera.y**2 + v_to_camera.z**2)
+        if v_len > 1e-6:
+            v_to_camera.x /= v_len
+            v_to_camera.y /= v_len
+            v_to_camera.z /= v_len
+        
         # Вычисляем скалярное произведение
         dot_product = self.normal.x * v_to_camera.x + self.normal.y * v_to_camera.y + self.normal.z * v_to_camera.z
         
         # Если скалярное произведение положительное, грань видна с позиции камеры
-        return dot_product > 0
+        # Используем небольшой допуск для стабильности алгоритма
+        return dot_product > 1e-6
     
     def get_depth(self):
         """Возвращает среднюю глубину треугольника (расстояние от камеры)"""
@@ -817,15 +825,20 @@ class Letter3D:
             self.edges.append((vertices_back_inner[i], vertices_back_inner[i+1]))
             self.edges.append((vertices_back_outer[i], vertices_back_outer[i+1]))
             
-            # Соединяющие рёбра между передней и задней гранями
-            if i == 0 or i == self.segments - 1:
-                self.edges.append((vertices_front_inner[i], vertices_back_inner[i]))
-                self.edges.append((vertices_front_outer[i], vertices_back_outer[i]))
+            # Соединяющие рёбра между передней и задней гранями (боковые грани)
+            # Добавляем их для всех сегментов, чтобы обеспечить полное заполнение
+            self.edges.append((vertices_front_inner[i], vertices_back_inner[i]))
+            self.edges.append((vertices_front_outer[i], vertices_back_outer[i]))
             
-            # Радиальные рёбра
-            if i % (self.segments // 4) == 0:
+            # Радиальные рёбра для лучшей визуализации
+            if i % 2 == 0:  # Добавляем больше радиальных рёбер для плавности
                 self.edges.append((vertices_front_inner[i], vertices_front_outer[i]))
                 self.edges.append((vertices_back_inner[i], vertices_back_outer[i]))
+        
+        # Добавляем последние соединяющие рёбра для замыкания формы
+        last_idx = self.segments
+        self.edges.append((vertices_front_inner[last_idx], vertices_back_inner[last_idx]))
+        self.edges.append((vertices_front_outer[last_idx], vertices_back_outer[last_idx]))
     
     def set_dimensions(self, width, height, depth):
         self.width = width
@@ -968,7 +981,9 @@ class ZBuffer:
         
     def clear_buffer(self):
         """Очистка Z-буфера (установка максимальной глубины для всех пикселей)"""
+        # Инициализируем буфер глубины бесконечными значениями
         self.buffer = np.full((self.height, self.width), np.inf, dtype=np.float64)
+        # Инициализируем буфер цветов прозрачными значениями
         self.color_buffer = np.zeros((self.height, self.width, 4), dtype=np.uint8)
         
     def resize(self, width, height):
@@ -981,6 +996,7 @@ class ZBuffer:
         """Установка пикселя, если его z-координата меньше текущего значения в буфере"""
         # Проверяем, находится ли пиксель в пределах буфера
         if 0 <= x < self.width and 0 <= y < self.height:
+            # Проверяем, ближе ли новая точка к камере, чем текущее значение
             if z < self.buffer[y, x]:
                 self.buffer[y, x] = z
                 self.color_buffer[y, x] = [color.red(), color.green(), color.blue(), color.alpha()]
@@ -988,16 +1004,12 @@ class ZBuffer:
         return False
     
     def fill_triangle(self, triangle, screen_coords, colors):
-        """Закрашивание треугольника с использованием Z-буфера"""
+        """Закрашивание треугольника с использованием Z-буфера и интерполяцией цветов"""
         # Находим границы треугольника на экране
-        min_x = max(0, min(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
-        max_x = min(self.width - 1, max(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
-        min_y = max(0, min(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
-        max_y = min(self.height - 1, max(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
-        
-        # Конвертируем в целые числа
-        min_x, max_x = int(min_x), int(max_x)
-        min_y, max_y = int(min_y), int(max_y)
+        min_x = max(0, min(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
+        max_x = min(self.width - 1, max(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
+        min_y = max(0, min(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
+        max_y = min(self.height - 1, max(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
         
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
@@ -1012,8 +1024,17 @@ class ZBuffer:
                 
                 # Если точка находится внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                    # Интерполируем z-координату
-                    z = w0 * z0 + w1 * z1 + w2 * z2
+                    # Интерполируем z-координату с учетом перспективы
+                    # Для правильной интерполяции используем обратные значения глубины
+                    if abs(z0) < 1e-6 or abs(z1) < 1e-6 or abs(z2) < 1e-6:
+                        # Защита от деления на ноль
+                        z = w0 * z0 + w1 * z1 + w2 * z2
+                    else:
+                        inv_z0 = 1.0 / z0
+                        inv_z1 = 1.0 / z1
+                        inv_z2 = 1.0 / z2
+                        inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
+                        z = 1.0 / inv_z if abs(inv_z) > 1e-6 else 0
                     
                     # Интерполируем цвет
                     if colors is not None:
@@ -1061,16 +1082,12 @@ class ZBuffer:
         return (u, v, w)
     
     def fill_triangle_phong(self, triangle, screen_coords, base_color, light_position, camera_position, light_color=None):
-        """Закрашивание треугольника с использованием метода затенения Фонга"""
+        """Закрашивание треугольника с использованием метода затенения Фонга и Z-буфера"""
         # Находим границы треугольника на экране
-        min_x = max(0, min(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
-        max_x = min(self.width - 1, max(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
-        min_y = max(0, min(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
-        max_y = min(self.height - 1, max(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
-        
-        # Конвертируем в целые числа
-        min_x, max_x = int(min_x), int(max_x)
-        min_y, max_y = int(min_y), int(max_y)
+        min_x = max(0, min(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
+        max_x = min(self.width - 1, max(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
+        min_y = max(0, min(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
+        max_y = min(self.height - 1, max(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
         
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
@@ -1090,8 +1107,20 @@ class ZBuffer:
                 
                 # Если точка находится внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
-                    # Интерполируем z-координату
-                    z = w0 * z0 + w1 * z1 + w2 * z2
+                    # Интерполируем z-координату с учетом перспективы
+                    if abs(z0) < 1e-6 or abs(z1) < 1e-6 or abs(z2) < 1e-6:
+                        # Защита от деления на ноль
+                        z = w0 * z0 + w1 * z1 + w2 * z2
+                    else:
+                        inv_z0 = 1.0 / z0
+                        inv_z1 = 1.0 / z1
+                        inv_z2 = 1.0 / z2
+                        inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
+                        z = 1.0 / inv_z if abs(inv_z) > 1e-6 else 0
+                    
+                    # Проверяем, если этот пиксель уже установлен с меньшим значением Z
+                    if z >= self.buffer[y, x]:
+                        continue  # Переходим к следующему пикселю
                     
                     # Интерполируем нормаль в точке
                     nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
@@ -1300,19 +1329,19 @@ class Canvas3D(QWidget):
         
         # Если режим отображения - каркасный, рисуем как раньше
         if self.render_mode == 'wireframe':
-        # Отрисовка мировых осей координат (всегда)
+            # Отрисовка мировых осей координат (всегда)
             self.draw_world_axes(painter, view_matrix, projection_matrix)
-        
-        # Рисуем первую букву
+            
+            # Рисуем первую букву
             self.draw_letter_wireframe(painter, self.letter1, view_matrix, projection_matrix, QColor(0, 255, 0))
-        
-        # Рисуем вторую букву
+            
+            # Рисуем вторую букву
             self.draw_letter_wireframe(painter, self.letter2, view_matrix, projection_matrix, QColor(255, 255, 0))
             
             # Отображаем источник света
             self.draw_light(painter, self.light, view_matrix, projection_matrix)
         else:
-            # Используем Z-буфер для отрисовки
+            # Используем Z-буфер для отрисовки c затенением
             self.draw_with_z_buffer(painter, view_matrix, projection_matrix)
             
             # Всегда рисуем оси и источник света поверх остального
@@ -1330,77 +1359,90 @@ class Canvas3D(QWidget):
         # Добавляем треугольники первой буквы
         for triangle in self.letter1.triangles:
             transformed_triangle = triangle.transform(self.letter1.transform_matrix)
-            triangles.append((transformed_triangle, self.letter1.color))
+            # Вычисляем нормаль для определения видимости
+            transformed_triangle.calculate_normal()
+            # Проверяем, виден ли треугольник с позиции камеры
+            if transformed_triangle.is_visible(self.camera.position):
+                triangles.append((transformed_triangle, self.letter1.color))
         
         # Добавляем треугольники второй буквы
         for triangle in self.letter2.triangles:
             transformed_triangle = triangle.transform(self.letter2.transform_matrix)
-            triangles.append((transformed_triangle, self.letter2.color))
-        
-        # Закрашиваем все треугольники с учетом Z-буфера
-        for triangle, base_color in triangles:
+            # Вычисляем нормаль для определения видимости
+            transformed_triangle.calculate_normal()
             # Проверяем, виден ли треугольник с позиции камеры
-            if triangle.is_visible(self.camera.position):
-                # Получаем экранные координаты вершин
-                screen_coords = []
-                for vertex in triangle.vertices:
-                    screen_coord = self.renderer.project_vertex(vertex, np.identity(4), view_matrix, projection_matrix)
-                    screen_coords.append(screen_coord)
+            if transformed_triangle.is_visible(self.camera.position):
+                triangles.append((transformed_triangle, self.letter2.color))
+        
+        # Очищаем Z-буфер перед отрисовкой
+        self.z_buffer.clear_buffer()
+        
+        # Сортируем треугольники по глубине (от дальних к ближним)
+        # Это оптимизация, которая помогает Z-буферу работать эффективнее
+        triangles.sort(key=lambda x: x[0].get_depth(), reverse=True)
+        
+        # Закрашиваем все видимые треугольники с учетом Z-буфера
+        for triangle, base_color in triangles:
+            # Получаем экранные координаты вершин
+            screen_coords = []
+            for vertex in triangle.vertices:
+                screen_coord = self.renderer.project_vertex(vertex, np.identity(4), view_matrix, projection_matrix)
+                screen_coords.append(screen_coord)
+            
+            # Вычисляем освещение в зависимости от режима затенения
+            if self.render_mode == 'flat':
+                # Плоское затенение - одна интенсивность для всего треугольника
+                light_intensity = triangle.calculate_shading(
+                    self.light.position, 
+                    'flat',
+                    self.camera.position,
+                    self.light.color
+                )
                 
-                # Вычисляем освещение в зависимости от режима затенения
-                if self.render_mode == 'flat':
-                    # Плоское затенение - одна интенсивность для всего треугольника
-                    light_intensity = triangle.calculate_shading(
-                        self.light.position, 
-                        'flat',
-                        self.camera.position,
-                        self.light.color
-                    )
-                    
-                    # Применяем цвет источника света к базовому цвету
-                    light_color = self.light.color
-                    r = min(255, int(base_color.red() * light_intensity * light_color.red() / 255))
-                    g = min(255, int(base_color.green() * light_intensity * light_color.green() / 255))
-                    b = min(255, int(base_color.blue() * light_intensity * light_color.blue() / 255))
-                    color = QColor(r, g, b)
-                    
-                    # Один цвет для всего треугольника
-                    colors = [color, color, color]
-                    
-                    # Заполняем треугольник
-                    self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+                # Применяем цвет источника света к базовому цвету
+                light_color = self.light.color
+                r = min(255, int(base_color.red() * light_intensity * light_color.red() / 255))
+                g = min(255, int(base_color.green() * light_intensity * light_color.green() / 255))
+                b = min(255, int(base_color.blue() * light_intensity * light_color.blue() / 255))
+                color = QColor(r, g, b)
                 
-                elif self.render_mode == 'gouraud':
-                    # Метод Гуро - вычисляем интенсивности для вершин
-                    triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
-                    
-                    # Создаем цвета для каждой вершины на основе интенсивности с учетом цвета источника
-                    colors = []
-                    light_color = self.light.color
-                    for i in range(3):
-                        intensity = triangle.vertex_intensity[i]
-                        r = min(255, int(base_color.red() * intensity * light_color.red() / 255))
-                        g = min(255, int(base_color.green() * intensity * light_color.green() / 255))
-                        b = min(255, int(base_color.blue() * intensity * light_color.blue() / 255))
-                        colors.append(QColor(r, g, b))
-                    
-                    # Заполняем треугольник с интерполяцией
-                    self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+                # Один цвет для всего треугольника
+                colors = [color, color, color]
                 
-                elif self.render_mode == 'phong':
-                    # Для метода Фонга вычисляем нормали в вершинах
-                    triangle.calculate_vertex_normals()
-                    
-                    # Вычисляем цвета для каждой точки внутри треугольника во время заполнения
-                    # Для этого используем специальную версию заполнения треугольника
-                    self.z_buffer.fill_triangle_phong(
-                        triangle, 
-                        screen_coords, 
-                        base_color, 
-                        self.light.position, 
-                        self.camera.position,
-                        self.light.color
-                    )
+                # Заполняем треугольник
+                self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+            
+            elif self.render_mode == 'gouraud':
+                # Метод Гуро - вычисляем интенсивности для вершин
+                triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
+                
+                # Создаем цвета для каждой вершины на основе интенсивности с учетом цвета источника
+                colors = []
+                light_color = self.light.color
+                for i in range(3):
+                    intensity = triangle.vertex_intensity[i]
+                    r = min(255, int(base_color.red() * intensity * light_color.red() / 255))
+                    g = min(255, int(base_color.green() * intensity * light_color.green() / 255))
+                    b = min(255, int(base_color.blue() * intensity * light_color.blue() / 255))
+                    colors.append(QColor(r, g, b))
+                
+                # Заполняем треугольник с интерполяцией
+                self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+            
+            elif self.render_mode == 'phong':
+                # Для метода Фонга вычисляем нормали в вершинах
+                triangle.calculate_vertex_normals()
+                
+                # Вычисляем цвета для каждой точки внутри треугольника во время заполнения
+                # Для этого используем специальную версию заполнения треугольника
+                self.z_buffer.fill_triangle_phong(
+                    triangle, 
+                    screen_coords, 
+                    base_color, 
+                    self.light.position, 
+                    self.camera.position,
+                    self.light.color
+                )
         
         # Создаем изображение из Z-буфера и отображаем его
         image = self.z_buffer.render_to_image()
