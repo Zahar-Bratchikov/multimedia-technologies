@@ -3,7 +3,8 @@ import math
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QSlider, QPushButton, QSpinBox,
-                              QGroupBox, QDoubleSpinBox, QComboBox, QCheckBox, QTabWidget)
+                              QGroupBox, QDoubleSpinBox, QComboBox, QCheckBox, QTabWidget,
+                              QColorDialog)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPen, QColor, QImage
 
@@ -24,6 +25,8 @@ class Triangle:
         self.vertices = [v1, v2, v3]
         self.color = color
         self.normal = None  # Для хранения нормали к треугольнику
+        self.vertex_normals = [None, None, None]  # Для хранения нормалей в вершинах (для метода Фонга)
+        self.vertex_intensity = [None, None, None]  # Для хранения интенсивности освещения в вершинах (для метода Гуро)
     
     def transform(self, matrix):
         result = Triangle(Vector3D(), Vector3D(), Vector3D(), self.color)
@@ -85,7 +88,7 @@ class Triangle:
         # Простой способ - взять среднее значение Z координат всех вершин
         return (self.vertices[0].z + self.vertices[1].z + self.vertices[2].z) / 3.0
     
-    def calculate_shading(self, light_position, shading_method="flat", camera_position=None):
+    def calculate_shading(self, light_position, shading_method="flat", camera_position=None, light_color=None):
         """Рассчитывает цвет треугольника на основе освещения"""
         if self.normal is None:
             self.calculate_normal()
@@ -148,6 +151,145 @@ class Triangle:
         
         # Возвращаем интенсивность освещения
         return light_intensity
+    
+    def calculate_vertex_normals(self):
+        """Вычисляет нормали к вершинам для метода Фонга"""
+        if self.normal is None:
+            self.calculate_normal()
+        
+        # Простой случай - просто используем нормаль к грани для всех вершин
+        # В реальном сценарии нормали вершин должны быть усреднены по соседним граням
+        for i in range(3):
+            self.vertex_normals[i] = Vector3D(self.normal.x, self.normal.y, self.normal.z)
+    
+    def calculate_vertex_intensity(self, light_position, camera_position=None, light_color=None):
+        """Рассчитывает интенсивность освещения в вершинах для метода Гуро"""
+        if self.normal is None:
+            self.calculate_normal()
+            
+        # Если нормали вершин не вычислены, делаем это сейчас
+        if self.vertex_normals[0] is None:
+            self.calculate_vertex_normals()
+            
+        # Для каждой вершины вычисляем освещенность
+        for i in range(3):
+            vertex = self.vertices[i]
+            normal = self.vertex_normals[i]
+            
+            # Направление от вершины к источнику света
+            light_dir = Vector3D(
+                light_position.x - vertex.x,
+                light_position.y - vertex.y,
+                light_position.z - vertex.z
+            )
+            
+            # Нормализуем вектор
+            light_len = math.sqrt(light_dir.x**2 + light_dir.y**2 + light_dir.z**2)
+            if light_len > 1e-6:
+                light_dir.x /= light_len
+                light_dir.y /= light_len
+                light_dir.z /= light_len
+            
+            # Косинус угла между нормалью и направлением света (диффузное отражение)
+            diffuse = max(0, normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
+            
+            # Для метода Фонга добавляем расчет зеркального отражения
+            if camera_position is not None:
+                # Вектор отражения света
+                reflect_coeff = 2.0 * (normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
+                reflect = Vector3D(
+                    normal.x * reflect_coeff - light_dir.x,
+                    normal.y * reflect_coeff - light_dir.y,
+                    normal.z * reflect_coeff - light_dir.z
+                )
+                
+                # Вектор от вершины к камере
+                view = Vector3D(
+                    camera_position.x - vertex.x,
+                    camera_position.y - vertex.y,
+                    camera_position.z - vertex.z
+                )
+                
+                # Нормализуем вектор взгляда
+                view_len = math.sqrt(view.x**2 + view.y**2 + view.z**2)
+                if view_len > 1e-6:
+                    view.x /= view_len
+                    view.y /= view_len
+                    view.z /= view_len
+                
+                # Вычисляем зеркальное отражение
+                specular = max(0, reflect.x * view.x + reflect.y * view.y + reflect.z * view.z) ** 20
+                
+                # Итоговая интенсивность с учетом зеркального отражения
+                self.vertex_intensity[i] = min(1.0, 0.2 + diffuse * 0.5 + specular * 0.3)
+            else:
+                # Итоговая интенсивность только с диффузным отражением
+                self.vertex_intensity[i] = min(1.0, 0.2 + diffuse * 0.8)
+                
+        return self.vertex_intensity
+    
+    def interpolate_intensity(self, barycentric_coords):
+        """Интерполирует интенсивность освещения внутри треугольника по барицентрическим координатам"""
+        if self.vertex_intensity[0] is None:
+            return 1.0  # По умолчанию, если интенсивность не рассчитана
+            
+        # Интерполяция по барицентрическим координатам
+        w0, w1, w2 = barycentric_coords
+        return w0 * self.vertex_intensity[0] + w1 * self.vertex_intensity[1] + w2 * self.vertex_intensity[2]
+    
+    def get_interpolated_intensity(self, x, y, screen_coords):
+        """Получает интерполированную интенсивность в точке (x,y) экрана по формулам из слайдов"""
+        # Распаковываем экранные координаты вершин
+        (x1, y1), (x2, y2), (x3, y3) = screen_coords
+        
+        # Если интенсивность в вершинах не вычислена, возвращаем значение по умолчанию
+        if self.vertex_intensity[0] is None:
+            return 1.0
+            
+        # Извлекаем интенсивности в вершинах
+        i1, i2, i3 = self.vertex_intensity
+        
+        # Получаем барицентрические координаты для интерполяции
+        w0, w1, w2 = self._barycentric_coords((x1, y1), (x2, y2), (x3, y3), (x, y))
+        
+        # Если точка не в треугольнике, возвращаем значение по умолчанию
+        if w0 < 0 or w1 < 0 or w2 < 0:
+            return 1.0
+            
+        # Интерполяция по барицентрическим координатам
+        return w0 * i1 + w1 * i2 + w2 * i3
+    
+    def _barycentric_coords(self, v0, v1, v2, p):
+        """Вычисление барицентрических координат точки p относительно треугольника (v0, v1, v2)"""
+        # Конвертируем в float для точности вычислений
+        v0 = (float(v0[0]), float(v0[1]))
+        v1 = (float(v1[0]), float(v1[1]))
+        v2 = (float(v2[0]), float(v2[1]))
+        p = (float(p[0]), float(p[1]))
+        
+        # Вычисляем векторы
+        v0v1 = (v1[0] - v0[0], v1[1] - v0[1])
+        v0v2 = (v2[0] - v0[0], v2[1] - v0[1])
+        v0p = (p[0] - v0[0], p[1] - v0[1])
+        
+        # Вычисляем определители для барицентрических координат
+        d00 = v0v1[0] * v0v1[0] + v0v1[1] * v0v1[1]
+        d01 = v0v1[0] * v0v2[0] + v0v1[1] * v0v2[1]
+        d11 = v0v2[0] * v0v2[0] + v0v2[1] * v0v2[1]
+        d20 = v0p[0] * v0v1[0] + v0p[1] * v0v1[1]
+        d21 = v0p[0] * v0v2[0] + v0p[1] * v0v2[1]
+        
+        # Вычисляем барицентрические координаты
+        denom = d00 * d11 - d01 * d01
+        # Защита от деления на ноль
+        if abs(denom) < 1e-6:
+            return (-1, -1, -1)  # Вырожденный треугольник
+            
+        v = (d11 * d20 - d01 * d21) / denom
+        w = (d00 * d21 - d01 * d20) / denom
+        u = 1.0 - v - w
+        
+        return (u, v, w)
 
 class Matrix4x4:
     @staticmethod
@@ -304,6 +446,10 @@ class Light:
             self.position = position
         self.color = QColor(255, 255, 255)  # Белый цвет по умолчанию
         self.intensity = 1.0  # Интенсивность по умолчанию
+    
+    def set_color(self, color):
+        """Устанавливает цвет источника света"""
+        self.color = color
 
 class Letter3D:
     def __init__(self, letter_type, width=100, height=100, depth=20, color=None):
@@ -914,6 +1060,119 @@ class ZBuffer:
         
         return (u, v, w)
     
+    def fill_triangle_phong(self, triangle, screen_coords, base_color, light_position, camera_position, light_color=None):
+        """Закрашивание треугольника с использованием метода затенения Фонга"""
+        # Находим границы треугольника на экране
+        min_x = max(0, min(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
+        max_x = min(self.width - 1, max(screen_coords[0][0], screen_coords[1][0], screen_coords[2][0]))
+        min_y = max(0, min(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
+        max_y = min(self.height - 1, max(screen_coords[0][1], screen_coords[1][1], screen_coords[2][1]))
+        
+        # Конвертируем в целые числа
+        min_x, max_x = int(min_x), int(max_x)
+        min_y, max_y = int(min_y), int(max_y)
+        
+        # Получаем вершины треугольника и их z-координаты
+        v0, v1, v2 = screen_coords
+        z0, z1, z2 = triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z
+        
+        # Получаем нормали вершин
+        if triangle.vertex_normals[0] is None:
+            triangle.calculate_vertex_normals()
+        
+        n0, n1, n2 = triangle.vertex_normals
+        
+        # Перебираем пиксели в рамках прямоугольника, содержащего треугольник
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                # Вычисляем барицентрические координаты
+                w0, w1, w2 = self._barycentric_coords(v0, v1, v2, (x, y))
+                
+                # Если точка находится внутри треугольника
+                if w0 >= 0 and w1 >= 0 and w2 >= 0:
+                    # Интерполируем z-координату
+                    z = w0 * z0 + w1 * z1 + w2 * z2
+                    
+                    # Интерполируем нормаль в точке
+                    nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
+                    ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
+                    nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
+                    
+                    # Нормализуем интерполированную нормаль
+                    length = math.sqrt(nx*nx + ny*ny + nz*nz)
+                    if length > 1e-6:
+                        nx /= length
+                        ny /= length
+                        nz /= length
+                    
+                    # Интерполируем позицию в 3D
+                    world_x = w0 * triangle.vertices[0].x + w1 * triangle.vertices[1].x + w2 * triangle.vertices[2].x
+                    world_y = w0 * triangle.vertices[0].y + w1 * triangle.vertices[1].y + w2 * triangle.vertices[2].y
+                    world_z = w0 * triangle.vertices[0].z + w1 * triangle.vertices[1].z + w2 * triangle.vertices[2].z
+                    
+                    # Создаем вектор нормали и позиции в мировых координатах
+                    normal = Vector3D(nx, ny, nz)
+                    position = Vector3D(world_x, world_y, world_z)
+                    
+                    # Направление света
+                    light_dir = Vector3D(
+                        light_position.x - position.x,
+                        light_position.y - position.y,
+                        light_position.z - position.z
+                    )
+                    
+                    # Нормализуем вектор направления света
+                    light_len = math.sqrt(light_dir.x**2 + light_dir.y**2 + light_dir.z**2)
+                    if light_len > 1e-6:
+                        light_dir.x /= light_len
+                        light_dir.y /= light_len
+                        light_dir.z /= light_len
+                    
+                    # Диффузное отражение
+                    diffuse = max(0, normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
+                    
+                    # Зеркальное отражение (по модели Фонга)
+                    # Вектор отражения света
+                    reflect_coeff = 2.0 * (normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
+                    reflect = Vector3D(
+                        normal.x * reflect_coeff - light_dir.x,
+                        normal.y * reflect_coeff - light_dir.y,
+                        normal.z * reflect_coeff - light_dir.z
+                    )
+                    
+                    # Вектор взгляда (от точки на треугольнике к камере)
+                    view = Vector3D(
+                        camera_position.x - position.x,
+                        camera_position.y - position.y,
+                        camera_position.z - position.z
+                    )
+                    
+                    # Нормализуем вектор взгляда
+                    view_len = math.sqrt(view.x**2 + view.y**2 + view.z**2)
+                    if view_len > 1e-6:
+                        view.x /= view_len
+                        view.y /= view_len
+                        view.z /= view_len
+                    
+                    # Коэффициент зеркального отражения
+                    specular = max(0, reflect.x * view.x + reflect.y * view.y + reflect.z * view.z) ** 20
+                    
+                    # Итоговая интенсивность освещения
+                    light_intensity = min(1.0, 0.2 + diffuse * 0.5 + specular * 0.3)
+                    
+                    # Применяем интенсивность освещения к базовому цвету с учетом цвета источника света
+                    if light_color:
+                        r = min(255, int(base_color.red() * light_intensity * light_color.red() / 255))
+                        g = min(255, int(base_color.green() * light_intensity * light_color.green() / 255))
+                        b = min(255, int(base_color.blue() * light_intensity * light_color.blue() / 255))
+                    else:
+                        r = min(255, int(base_color.red() * light_intensity))
+                        g = min(255, int(base_color.green() * light_intensity))
+                        b = min(255, int(base_color.blue() * light_intensity))
+                    
+                    # Устанавливаем пиксель, если он ближе
+                    self.set_pixel(x, y, z, QColor(r, g, b, base_color.alpha()))
+    
     def render_to_image(self):
         """Создает QImage из текущего состояния цветового буфера"""
         image = QImage(self.width, self.height, QImage.Format_RGBA8888)
@@ -1088,31 +1347,60 @@ class Canvas3D(QWidget):
                     screen_coord = self.renderer.project_vertex(vertex, np.identity(4), view_matrix, projection_matrix)
                     screen_coords.append(screen_coord)
                 
-                # Вычисляем цвет треугольника на основе освещения
-                if self.render_mode in ['flat', 'gouraud', 'phong']:
-                    # Вычисляем нормаль к треугольнику для освещения
+                # Вычисляем освещение в зависимости от режима затенения
+                if self.render_mode == 'flat':
+                    # Плоское затенение - одна интенсивность для всего треугольника
                     light_intensity = triangle.calculate_shading(
                         self.light.position, 
-                        self.render_mode,
-                        self.camera.position if self.render_mode == 'phong' else None
+                        'flat',
+                        self.camera.position,
+                        self.light.color
                     )
                     
-                    # Модифицируем базовый цвет с учетом освещения
-                    r = min(255, int(base_color.red() * light_intensity))
-                    g = min(255, int(base_color.green() * light_intensity))
-                    b = min(255, int(base_color.blue() * light_intensity))
+                    # Применяем цвет источника света к базовому цвету
+                    light_color = self.light.color
+                    r = min(255, int(base_color.red() * light_intensity * light_color.red() / 255))
+                    g = min(255, int(base_color.green() * light_intensity * light_color.green() / 255))
+                    b = min(255, int(base_color.blue() * light_intensity * light_color.blue() / 255))
                     color = QColor(r, g, b)
                     
-                    # Заполняем треугольник в Z-буфере
-                    if self.render_mode == 'flat':
-                        # Для плоского затенения используем один цвет для всего треугольника
-                        colors = [color, color, color]
-                    else:
-                        # Для методов Гуро и Фонга нужно вычислить освещение для каждой вершины
-                        # В данной реализации, упрощаем, используя один цвет
-                        colors = [color, color, color]
+                    # Один цвет для всего треугольника
+                    colors = [color, color, color]
                     
+                    # Заполняем треугольник
                     self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+                
+                elif self.render_mode == 'gouraud':
+                    # Метод Гуро - вычисляем интенсивности для вершин
+                    triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
+                    
+                    # Создаем цвета для каждой вершины на основе интенсивности с учетом цвета источника
+                    colors = []
+                    light_color = self.light.color
+                    for i in range(3):
+                        intensity = triangle.vertex_intensity[i]
+                        r = min(255, int(base_color.red() * intensity * light_color.red() / 255))
+                        g = min(255, int(base_color.green() * intensity * light_color.green() / 255))
+                        b = min(255, int(base_color.blue() * intensity * light_color.blue() / 255))
+                        colors.append(QColor(r, g, b))
+                    
+                    # Заполняем треугольник с интерполяцией
+                    self.z_buffer.fill_triangle(triangle, screen_coords, colors)
+                
+                elif self.render_mode == 'phong':
+                    # Для метода Фонга вычисляем нормали в вершинах
+                    triangle.calculate_vertex_normals()
+                    
+                    # Вычисляем цвета для каждой точки внутри треугольника во время заполнения
+                    # Для этого используем специальную версию заполнения треугольника
+                    self.z_buffer.fill_triangle_phong(
+                        triangle, 
+                        screen_coords, 
+                        base_color, 
+                        self.light.position, 
+                        self.camera.position,
+                        self.light.color
+                    )
         
         # Создаем изображение из Z-буфера и отображаем его
         image = self.z_buffer.render_to_image()
@@ -1237,40 +1525,19 @@ class MainWindow(QMainWindow):
         letter_group = QGroupBox(f"Параметры буквы {letter_type}")
         letter_layout = QVBoxLayout(letter_group)
         
-        # Добавляем выбор цвета буквы
+        # Добавляем выбор цвета буквы через ColorDialog
         color_layout = QHBoxLayout()
         color_layout.addWidget(QLabel("Цвет:"))
         
-        # Кнопки для выбора базовых цветов
-        red_btn = QPushButton()
-        red_btn.setStyleSheet("background-color: red; min-width: 20px; min-height: 20px;")
-        red_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 0, 0)))
-        color_layout.addWidget(red_btn)
-        
-        green_btn = QPushButton()
-        green_btn.setStyleSheet("background-color: green; min-width: 20px; min-height: 20px;")
-        green_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 255, 0)))
-        color_layout.addWidget(green_btn)
-        
-        blue_btn = QPushButton()
-        blue_btn.setStyleSheet("background-color: blue; min-width: 20px; min-height: 20px;")
-        blue_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 0, 255)))
-        color_layout.addWidget(blue_btn)
-        
-        yellow_btn = QPushButton()
-        yellow_btn.setStyleSheet("background-color: yellow; min-width: 20px; min-height: 20px;")
-        yellow_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 255, 0)))
-        color_layout.addWidget(yellow_btn)
-        
-        cyan_btn = QPushButton()
-        cyan_btn.setStyleSheet("background-color: cyan; min-width: 20px; min-height: 20px;")
-        cyan_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(0, 255, 255)))
-        color_layout.addWidget(cyan_btn)
-        
-        magenta_btn = QPushButton()
-        magenta_btn.setStyleSheet("background-color: magenta; min-width: 20px; min-height: 20px;")
-        magenta_btn.clicked.connect(lambda: self.change_letter_color(letter_index, QColor(255, 0, 255)))
-        color_layout.addWidget(magenta_btn)
+        # Создаем кнопку для выбора цвета
+        color_btn = QPushButton("Выбрать цвет")
+        # Устанавливаем текущий цвет как фон кнопки
+        color_btn.setStyleSheet(f"background-color: rgb({letter_obj.color.red()}, {letter_obj.color.green()}, {letter_obj.color.blue()}); color: white;")
+        # Сохраняем ссылку на кнопку, чтобы обновлять ее цвет
+        setattr(self, f"color_btn_{letter_index}", color_btn)
+        # Подключаем обработчик нажатия
+        color_btn.clicked.connect(lambda: self.show_color_picker(letter_index))
+        color_layout.addWidget(color_btn)
         
         letter_layout.addLayout(color_layout)
         
@@ -1585,6 +1852,7 @@ class MainWindow(QMainWindow):
         modes = ['wireframe', 'flat', 'gouraud', 'phong']
         if index < len(modes):
             self.canvas.set_render_mode(modes[index])
+            self.canvas.update()
     
     def update_light_position(self):
         """Обновление позиции источника света"""
@@ -1648,6 +1916,27 @@ class MainWindow(QMainWindow):
         letter = getattr(self.canvas, f"letter{letter_index}")
         letter.set_color(color)
         self.canvas.update()
+    
+    def show_color_picker(self, letter_index):
+        """Отображает диалог выбора цвета и применяет выбранный цвет к букве"""
+        # Получаем текущую букву
+        letter = getattr(self.canvas, f"letter{letter_index}")
+        
+        # Создаем диалог выбора цвета с текущим цветом буквы
+        color_dialog = QColorDialog(letter.color, self)
+        color_dialog.setWindowTitle(f"Выбор цвета для буквы {letter.letter_type}")
+        
+        # Если пользователь выбрал цвет и нажал ОК
+        if color_dialog.exec():
+            # Получаем выбранный цвет
+            selected_color = color_dialog.selectedColor()
+            
+            # Применяем новый цвет к букве
+            self.change_letter_color(letter_index, selected_color)
+            
+            # Обновляем фон кнопки выбора цвета
+            color_btn = getattr(self, f"color_btn_{letter_index}")
+            color_btn.setStyleSheet(f"background-color: rgb({selected_color.red()}, {selected_color.green()}, {selected_color.blue()}); color: white;")
 
 def main():
     app = QApplication(sys.argv)
