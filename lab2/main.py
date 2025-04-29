@@ -37,10 +37,25 @@ class Triangle:
             if abs(v_transformed[3]) > 1e-6:
                 v_transformed = v_transformed / v_transformed[3]
             result.vertices[i] = Vector3D(v_transformed[0], v_transformed[1], v_transformed[2])
+        
+        # Копируем нормаль из исходного треугольника, если она была задана
+        if self.normal is not None:
+            # Для правильной трансформации нормали используем транспонированную обратную матрицу
+            # без учёта перемещения (только вращение и масштабирование)
+            # Но для упрощения просто копируем нормаль, предполагая, что нормаль задана в мировом пространстве
+            result.normal = Vector3D(self.normal.x, self.normal.y, self.normal.z)
+            
+        # Копируем другие свойства треугольника
+        result.face_type = self.face_type
+        
         return result
     
     def calculate_normal(self):
         """Вычисляет нормаль к треугольнику (единичный вектор, перпендикулярный поверхности)"""
+        # Если нормаль уже установлена, не вычисляем её заново
+        if self.normal is not None:
+            return self.normal
+            
         v1 = self.vertices[0]
         v2 = self.vertices[1]
         v3 = self.vertices[2]
@@ -603,10 +618,36 @@ class Letter3D:
             self.color
         )
         
-        # 3. Средняя горизонтальная линия
+        # 3. Средняя горизонтальная линия - увеличиваем размер для лучшего соединения с дугами
+        # Расчёт координат для лучшего соединения с верхней и нижней дугами
+        left_x = -w/6 - t/4     # Немного увеличиваем ширину влево 
+        right_x = w/6 + t/4     # Немного увеличиваем ширину вправо
+        
+        # Переопределяем положение прямоугольника для устранения щелей
         self._add_box_with_triangles(
-            Vector3D(-w/6, -d/2, -t_half),      # левый нижний передний
-            Vector3D(w/6, d/2, t_half),         # правый верхний задний
+            Vector3D(left_x, -d/2 - 0.1, -t_half),   # левый нижний передний, небольшой нахлест по Y
+            Vector3D(right_x, d/2 + 0.1, t_half),    # правый верхний задний, небольшой нахлест по Y
+            self.color
+        )
+        
+        # 4. Добавляем дополнительные прямоугольники для заполнения щелей в стыках
+        # Соединение с верхней дугой
+        top_arc_x = center_top_x + radius_top * math.cos(math.radians(start_angle_top))
+        top_arc_z = center_top_z + radius_top * math.sin(math.radians(start_angle_top))
+        
+        self._add_box_with_triangles(
+            Vector3D(top_arc_x - t/2, -d/2 - 0.1, top_arc_z - t/2),
+            Vector3D(top_arc_x + t/2, d/2 + 0.1, top_arc_z + t/2),
+            self.color
+        )
+        
+        # Соединение с нижней дугой
+        bottom_arc_x = center_bottom_x + radius_bottom * math.cos(math.radians(end_angle_bottom))
+        bottom_arc_z = center_bottom_z + radius_bottom * math.sin(math.radians(end_angle_bottom))
+        
+        self._add_box_with_triangles(
+            Vector3D(bottom_arc_x - t/2, -d/2 - 0.1, bottom_arc_z - t/2),
+            Vector3D(bottom_arc_x + t/2, d/2 + 0.1, bottom_arc_z + t/2),
             self.color
         )
     
@@ -905,6 +946,72 @@ class Letter3D:
         last_idx = self.segments
         self.edges.append((vertices_front_inner[last_idx], vertices_back_inner[last_idx]))
         self.edges.append((vertices_front_outer[last_idx], vertices_back_outer[last_idx]))
+        
+        # Добавляем закрывающие треугольники на концах дуги (крышки)
+        
+        # Вычисляем нормали для крышек
+        start_angle_rad = math.radians(start_angle)
+        end_angle_rad = math.radians(end_angle)
+        
+        # Нормаль для начальной крышки - направлена в сторону, противоположную началу дуги
+        start_normal_x = -math.cos(start_angle_rad)
+        start_normal_z = -math.sin(start_angle_rad)
+        
+        # Нормаль для конечной крышки - направлена в сторону конца дуги
+        end_normal_x = math.cos(end_angle_rad)
+        end_normal_z = math.sin(end_angle_rad)
+        
+        # Начальная крышка (соединяет внутренний и внешний радиусы на начале дуги)
+        start_front_triangle = Triangle(
+            self.vertices[vertices_front_inner[0]],
+            self.vertices[vertices_front_outer[0]],
+            self.vertices[vertices_back_inner[0]],
+            color
+        )
+        start_front_triangle.face_type = "external"
+        start_front_triangle.normal = Vector3D(start_normal_x, 0, start_normal_z)  # Устанавливаем нормаль вручную
+        self.triangles.append(start_front_triangle)
+        
+        start_back_triangle = Triangle(
+            self.vertices[vertices_back_inner[0]],
+            self.vertices[vertices_front_outer[0]],
+            self.vertices[vertices_back_outer[0]],
+            color
+        )
+        start_back_triangle.face_type = "external"
+        start_back_triangle.normal = Vector3D(start_normal_x, 0, start_normal_z)  # Устанавливаем нормаль вручную
+        self.triangles.append(start_back_triangle)
+        
+        # Добавляем рёбра для каркасного отображения начальной крышки
+        self.edges.append((vertices_front_inner[0], vertices_front_outer[0]))
+        self.edges.append((vertices_back_inner[0], vertices_back_outer[0]))
+        
+        # Конечная крышка (соединяет внутренний и внешний радиусы на конце дуги)
+        end_idx = self.segments
+        
+        end_front_triangle = Triangle(
+            self.vertices[vertices_front_inner[end_idx]],
+            self.vertices[vertices_back_inner[end_idx]],
+            self.vertices[vertices_front_outer[end_idx]],
+            color
+        )
+        end_front_triangle.face_type = "external"
+        end_front_triangle.normal = Vector3D(end_normal_x, 0, end_normal_z)  # Устанавливаем нормаль вручную
+        self.triangles.append(end_front_triangle)
+        
+        end_back_triangle = Triangle(
+            self.vertices[vertices_back_inner[end_idx]],
+            self.vertices[vertices_back_outer[end_idx]],
+            self.vertices[vertices_front_outer[end_idx]],
+            color
+        )
+        end_back_triangle.face_type = "external"
+        end_back_triangle.normal = Vector3D(end_normal_x, 0, end_normal_z)  # Устанавливаем нормаль вручную
+        self.triangles.append(end_back_triangle)
+        
+        # Добавляем рёбра для каркасного отображения конечной крышки
+        self.edges.append((vertices_front_inner[end_idx], vertices_front_outer[end_idx]))
+        self.edges.append((vertices_back_inner[end_idx], vertices_back_outer[end_idx]))
     
     def set_dimensions(self, width, height, depth):
         self.width = width
@@ -1192,11 +1299,17 @@ class ZBuffer:
         """Закрашивание треугольника с моделью освещения Фонга и попиксельным расчетом освещения"""
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
-        z0, z1, z2 = triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z
+        
+        # Важно: используем z-координаты из экранных координат, которые уже прошли проекцию
+        z0, z1, z2 = v0[2], v1[2], v2[2]
         
         # Проверка вырожденного треугольника
         if (v0[0] == v1[0] and v0[1] == v1[1]) or (v0[0] == v2[0] and v0[1] == v2[1]) or (v1[0] == v2[0] and v1[1] == v2[1]):
             return
+        
+        # Проверяем, полностью ли треугольник перед или за плоскостью отсечения
+        if (z0 > 1.0 and z1 > 1.0 and z2 > 1.0) or (z0 < -1.0 and z1 < -1.0 and z2 < -1.0):
+            return  # За пределами области видимости
         
         # Находим границы треугольника на экране
         min_x = max(0, int(min(v0[0], v1[0], v2[0])))
@@ -1229,6 +1342,63 @@ class ZBuffer:
         
         inv_area = 1.0 / area
         
+        # Заранее получаем мировые координаты вершин
+        world_v0 = triangle.vertices[0]
+        world_v1 = triangle.vertices[1]
+        world_v2 = triangle.vertices[2]
+        
+        # Заранее подготовим вектор к камере от вершин для оптимизации
+        view_dir0 = Vector3D(
+            camera_position.x - world_v0.x,
+            camera_position.y - world_v0.y,
+            camera_position.z - world_v0.z
+        )
+        view_dir1 = Vector3D(
+            camera_position.x - world_v1.x,
+            camera_position.y - world_v1.y,
+            camera_position.z - world_v1.z
+        )
+        view_dir2 = Vector3D(
+            camera_position.x - world_v2.x,
+            camera_position.y - world_v2.y,
+            camera_position.z - world_v2.z
+        )
+        
+        # Нормализуем векторы взгляда
+        self._normalize_vector(view_dir0)
+        self._normalize_vector(view_dir1)
+        self._normalize_vector(view_dir2)
+        
+        # Заранее подготовим векторы света для вершин
+        light_dir0 = Vector3D(
+            light_position.x - world_v0.x,
+            light_position.y - world_v0.y,
+            light_position.z - world_v0.z
+        )
+        light_dir1 = Vector3D(
+            light_position.x - world_v1.x,
+            light_position.y - world_v1.y,
+            light_position.z - world_v1.z
+        )
+        light_dir2 = Vector3D(
+            light_position.x - world_v2.x,
+            light_position.y - world_v2.y,
+            light_position.z - world_v2.z
+        )
+        
+        # Нормализуем векторы света
+        self._normalize_vector(light_dir0)
+        self._normalize_vector(light_dir1)
+        self._normalize_vector(light_dir2)
+        
+        # Фоновое освещение (амбиентная составляющая)
+        ambient = 0.2
+        
+        # Коэффициенты для разных компонентов освещения
+        diffuse_factor = 0.7
+        specular_factor = 0.4
+        specular_power = 30  # Степень для зеркального блеска
+        
         # Проходим по всем пикселям в ограничивающем прямоугольнике
         for y in range(min_y, max_y + 1):
             for x in range(min_x, max_x + 1):
@@ -1240,45 +1410,22 @@ class ZBuffer:
                 # Если точка внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     # Интерполируем z-координату с перспективной коррекцией
-                    if abs(z0) > 1e-6 and abs(z1) > 1e-6 and abs(z2) > 1e-6:
-                        # Вычисляем обратные значения z для перспективной коррекции
-                        inv_z0 = 1.0 / z0
-                        inv_z1 = 1.0 / z1
-                        inv_z2 = 1.0 / z2
-                        
-                        # Перспективно-корректные веса
-                        perspective_w0 = w0 * inv_z0
-                        perspective_w1 = w1 * inv_z1
-                        perspective_w2 = w2 * inv_z2
-                        
-                        # Нормализуем веса
-                        weight_sum = perspective_w0 + perspective_w1 + perspective_w2
-                        if abs(weight_sum) > 1e-6:
-                            inv_w_sum = 1.0 / weight_sum
-                            perspective_w0 *= inv_w_sum
-                            perspective_w1 *= inv_w_sum
-                            perspective_w2 *= inv_w_sum
-                            
-                            # Расчет итоговой глубины
-                            z = 1.0 / (perspective_w0 * inv_z0 + perspective_w1 * inv_z1 + perspective_w2 * inv_z2)
-                        else:
-                            # Линейная интерполяция при проблемах с весами
-                            z = w0 * z0 + w1 * z1 + w2 * z2
-                    else:
-                        # Линейная интерполяция для малых z-значений
-                        z = w0 * z0 + w1 * z1 + w2 * z2
+                    # Используем значения z из проекции (NDC), в диапазоне [-1, 1]
+                    buffer_z = w0 * z0 + w1 * z1 + w2 * z2
+                    
+                    # Преобразуем z из диапазона [-1, 1] в диапазон [0, 1] для Z-буфера
+                    # где 0 - ближняя плоскость, 1 - дальняя
+                    normalized_z = (buffer_z + 1.0) / 2.0
                     
                     # Если пиксель ближе текущего в z-буфере
-                    if z < self.buffer[y, x]:
-                        # Интерполируем нормаль
-                        if abs(z0) > 1e-6 and abs(z1) > 1e-6 and abs(z2) > 1e-6 and abs(weight_sum) > 1e-6:
-                            nx = perspective_w0 * n0.x + perspective_w1 * n1.x + perspective_w2 * n2.x
-                            ny = perspective_w0 * n0.y + perspective_w1 * n1.y + perspective_w2 * n2.y
-                            nz = perspective_w0 * n0.z + perspective_w1 * n1.z + perspective_w2 * n2.z
-                        else:
-                            nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
-                            ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
-                            nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
+                    if normalized_z < self.buffer[y, x]:
+                        # Запоминаем глубину текущего пикселя
+                        self.buffer[y, x] = normalized_z
+                        
+                        # Интерполируем нормаль с перспективной коррекцией
+                        nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
+                        ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
+                        nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
                         
                         # Нормализуем интерполированную нормаль
                         n_length = math.sqrt(nx*nx + ny*ny + nz*nz)
@@ -1287,75 +1434,48 @@ class ZBuffer:
                             ny /= n_length
                             nz /= n_length
                         
-                        # Интерполируем мировую позицию
-                        if abs(z0) > 1e-6 and abs(z1) > 1e-6 and abs(z2) > 1e-6 and abs(weight_sum) > 1e-6:
-                            world_x = perspective_w0 * triangle.vertices[0].x + perspective_w1 * triangle.vertices[1].x + perspective_w2 * triangle.vertices[2].x
-                            world_y = perspective_w0 * triangle.vertices[0].y + perspective_w1 * triangle.vertices[1].y + perspective_w2 * triangle.vertices[2].y
-                            world_z = perspective_w0 * triangle.vertices[0].z + perspective_w1 * triangle.vertices[1].z + perspective_w2 * triangle.vertices[2].z
-                        else:
-                            world_x = w0 * triangle.vertices[0].x + w1 * triangle.vertices[1].x + w2 * triangle.vertices[2].x
-                            world_y = w0 * triangle.vertices[0].y + w1 * triangle.vertices[1].y + w2 * triangle.vertices[2].y
-                            world_z = w0 * triangle.vertices[0].z + w1 * triangle.vertices[1].z + w2 * triangle.vertices[2].z
+                        # Интерполируем вектор взгляда
+                        view_x = w0 * view_dir0.x + w1 * view_dir1.x + w2 * view_dir2.x
+                        view_y = w0 * view_dir0.y + w1 * view_dir1.y + w2 * view_dir2.y
+                        view_z = w0 * view_dir0.z + w1 * view_dir1.z + w2 * view_dir2.z
                         
-                        # Создаем векторы для расчета освещения
-                        normal = Vector3D(nx, ny, nz)
-                        position = Vector3D(world_x, world_y, world_z)
+                        # Нормализуем интерполированный вектор взгляда
+                        view_length = math.sqrt(view_x*view_x + view_y*view_y + view_z*view_z)
+                        if view_length > 1e-6:
+                            view_x /= view_length
+                            view_y /= view_length
+                            view_z /= view_length
                         
-                        # Вектор направления света
-                        light_dir = Vector3D(
-                            light_position.x - position.x,
-                            light_position.y - position.y,
-                            light_position.z - position.z
-                        )
+                        # Интерполируем вектор света
+                        light_x = w0 * light_dir0.x + w1 * light_dir1.x + w2 * light_dir2.x
+                        light_y = w0 * light_dir0.y + w1 * light_dir1.y + w2 * light_dir2.y
+                        light_z = w0 * light_dir0.z + w1 * light_dir1.z + w2 * light_dir2.z
                         
-                        # Нормализуем вектор света
-                        light_len = math.sqrt(light_dir.x**2 + light_dir.y**2 + light_dir.z**2)
-                        if light_len > 1e-6:
-                            light_dir.x /= light_len
-                            light_dir.y /= light_len
-                            light_dir.z /= light_len
+                        # Нормализуем интерполированный вектор света
+                        light_length = math.sqrt(light_x*light_x + light_y*light_y + light_z*light_z)
+                        if light_length > 1e-6:
+                            light_x /= light_length
+                            light_y /= light_length
+                            light_z /= light_length
                         
-                        # Вычисляем диффузную составляющую (скалярное произведение нормали и направления света)
-                        diffuse = max(0, normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
-                        
-                        # Вектор к камере
-                        view_dir = Vector3D(
-                            camera_position.x - position.x,
-                            camera_position.y - position.y,
-                            camera_position.z - position.z
-                        )
-                        
-                        # Нормализуем вектор к камере
-                        view_len = math.sqrt(view_dir.x**2 + view_dir.y**2 + view_dir.z**2)
-                        if view_len > 1e-6:
-                            view_dir.x /= view_len
-                            view_dir.y /= view_len
-                            view_dir.z /= view_len
+                        # Вычисляем диффузную составляющую
+                        diffuse = max(0, nx * light_x + ny * light_y + nz * light_z)
                         
                         # Вычисляем вектор отражения
-                        reflect_coeff = 2.0 * (normal.x * light_dir.x + normal.y * light_dir.y + normal.z * light_dir.z)
-                        reflect_dir = Vector3D(
-                            normal.x * reflect_coeff - light_dir.x,
-                            normal.y * reflect_coeff - light_dir.y,
-                            normal.z * reflect_coeff - light_dir.z
-                        )
+                        reflect_coeff = 2.0 * (nx * light_x + ny * light_y + nz * light_z)
+                        reflect_x = nx * reflect_coeff - light_x
+                        reflect_y = ny * reflect_coeff - light_y
+                        reflect_z = nz * reflect_coeff - light_z
                         
                         # Нормализуем вектор отражения
-                        reflect_len = math.sqrt(reflect_dir.x**2 + reflect_dir.y**2 + reflect_dir.z**2)
-                        if reflect_len > 1e-6:
-                            reflect_dir.x /= reflect_len
-                            reflect_dir.y /= reflect_len
-                            reflect_dir.z /= reflect_len
+                        reflect_length = math.sqrt(reflect_x*reflect_x + reflect_y*reflect_y + reflect_z*reflect_z)
+                        if reflect_length > 1e-6:
+                            reflect_x /= reflect_length
+                            reflect_y /= reflect_length
+                            reflect_z /= reflect_length
                         
                         # Вычисляем зеркальную составляющую
-                        specular = max(0, reflect_dir.x * view_dir.x + reflect_dir.y * view_dir.y + reflect_dir.z * view_dir.z) ** 30
-                        
-                        # Фоновое освещение (амбиентная составляющая)
-                        ambient = 0.2
-                        
-                        # Коэффициенты для разных компонентов освещения
-                        diffuse_factor = 0.7
-                        specular_factor = 0.4
+                        specular = max(0, reflect_x * view_x + reflect_y * view_y + reflect_z * view_z) ** specular_power
                         
                         # Итоговая интенсивность освещения
                         light_intensity = min(1.0, ambient + diffuse * diffuse_factor + specular * specular_factor)
@@ -1371,8 +1491,16 @@ class ZBuffer:
                             b = min(255, int(base_color.blue() * light_intensity))
                         
                         # Устанавливаем пиксель в буфер
-                        self.buffer[y, x] = z
                         self.color_buffer[y, x] = [r, g, b, 255]  # Полная непрозрачность
+    
+    def _normalize_vector(self, vector):
+        """Вспомогательный метод для нормализации вектора"""
+        length = math.sqrt(vector.x**2 + vector.y**2 + vector.z**2)
+        if length > 1e-6:
+            vector.x /= length
+            vector.y /= length
+            vector.z /= length
+        return vector
     
     def render_to_image(self):
         """Создает QImage из текущего состояния цветового буфера"""
@@ -1573,20 +1701,8 @@ class Canvas3D(QWidget):
             
             # Используем различные модели затенения в зависимости от выбранного режима
             if self.render_mode == 'flat':
-                # Плоское затенение - одна интенсивность для всего треугольника
-                light_intensity = triangle.calculate_shading(
-                    self.light.position, 
-                    'flat',
-                    self.camera.position,
-                    self.light.color
-                )
-                
-                # Применяем цвет источника света к базовому цвету
-                light_color = self.light.color
-                r = min(255, int(base_color.red() * light_intensity * light_color.red() / 255))
-                g = min(255, int(base_color.green() * light_intensity * light_color.green() / 255))
-                b = min(255, int(base_color.blue() * light_intensity * light_color.blue() / 255))
-                color = QColor(r, g, b, 255)  # Полная непрозрачность
+                # Плоское затенение - просто используем базовый цвет объекта без учета освещения
+                color = QColor(base_color.red(), base_color.green(), base_color.blue(), 255)  # Полная непрозрачность
                 
                 # Один цвет для всех вершин треугольника
                 colors = [color, color, color]
