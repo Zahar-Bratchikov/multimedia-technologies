@@ -981,9 +981,9 @@ class ZBuffer:
         
     def clear_buffer(self):
         """Очистка Z-буфера (установка максимальной глубины для всех пикселей)"""
-        # Инициализируем буфер глубины бесконечными значениями
-        self.buffer = np.full((self.height, self.width), np.inf, dtype=np.float64)
-        # Инициализируем буфер цветов прозрачными значениями
+        # Инициализируем буфер глубины очень большими значениями (имитация бесконечности)
+        self.buffer = np.full((self.height, self.width), 1.0e30, dtype=np.float64)
+        # Инициализируем буфер цветов черным цветом
         self.color_buffer = np.zeros((self.height, self.width, 4), dtype=np.uint8)
         
     def resize(self, width, height):
@@ -1004,94 +1004,133 @@ class ZBuffer:
         return False
     
     def fill_triangle(self, triangle, screen_coords, colors):
-        """Закрашивание треугольника с использованием Z-буфера и интерполяцией цветов"""
-        # Находим границы треугольника на экране
-        min_x = max(0, min(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
-        max_x = min(self.width - 1, max(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
-        min_y = max(0, min(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
-        max_y = min(self.height - 1, max(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
-        
+        """Закрашивание треугольника с использованием Z-буфера и интерполяцией цветов (попиксельно)"""
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
         z0, z1, z2 = triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z
+        
+        # Проверка вырожденного треугольника (с нулевой площадью)
+        if (v0[0] == v1[0] and v0[1] == v1[1]) or (v0[0] == v2[0] and v0[1] == v2[1]) or (v1[0] == v2[0] and v1[1] == v2[1]):
+            return  # Пропускаем вырожденные треугольники
+        
+        # Находим границы треугольника на экране с доп. проверками
+        min_x = max(0, min(int(v0[0]), int(v1[0]), int(v2[0])))
+        max_x = min(self.width - 1, max(int(v0[0]), int(v1[0]), int(v2[0])))
+        min_y = max(0, min(int(v0[1]), int(v1[1]), int(v2[1])))
+        max_y = min(self.height - 1, max(int(v0[1]), int(v1[1]), int(v2[1])))
+        
+        # Если треугольник находится за пределами экрана, пропускаем его
+        if max_x < min_x or max_y < min_y:
+            return
+        
+        # Оптимизация: вычисляем барицентрические коэффициенты заранее
+        # для повышения производительности
+        v0_x, v0_y = v0[0], v0[1]
+        v1_x, v1_y = v1[0], v1[1]
+        v2_x, v2_y = v2[0], v2[1]
+        
+        # Площадь треугольника (удвоенная)
+        area = (v1_x - v0_x) * (v2_y - v0_y) - (v2_x - v0_x) * (v1_y - v0_y)
+        
+        # Если площадь треугольника слишком мала, пропускаем его
+        if abs(area) < 1e-6:
+            return
+        
+        inv_area = 1.0 / area
         
         # Перебираем пиксели в рамках прямоугольника, содержащего треугольник
         for y in range(min_y, max_y + 1):
             for x in range(min_x, max_x + 1):
-                # Вычисляем барицентрические координаты для определения, находится ли точка внутри треугольника
-                # и для интерполяции z-координаты и цвета
-                w0, w1, w2 = self._barycentric_coords(v0, v1, v2, (x, y))
+                # Быстрое вычисление барицентрических координат
+                w0 = ((v1_x - x) * (v2_y - y) - (v2_x - x) * (v1_y - y)) * inv_area
+                w1 = ((v2_x - x) * (v0_y - y) - (v0_x - x) * (v2_y - y)) * inv_area
+                w2 = 1.0 - w0 - w1
                 
                 # Если точка находится внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     # Интерполируем z-координату с учетом перспективы
-                    # Для правильной интерполяции используем обратные значения глубины
-                    if abs(z0) < 1e-6 or abs(z1) < 1e-6 or abs(z2) < 1e-6:
-                        # Защита от деления на ноль
-                        z = w0 * z0 + w1 * z1 + w2 * z2
-                    else:
+                    # Для правильной перспективной коррекции (Perspective-correct interpolation)
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        # Перспективно-корректная интерполяция через обратные z
                         inv_z0 = 1.0 / z0
                         inv_z1 = 1.0 / z1
                         inv_z2 = 1.0 / z2
-                        inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
-                        z = 1.0 / inv_z if abs(inv_z) > 1e-6 else 0
+                        
+                        # Интерполируем обратные z-значения
+                        perspective_w0 = w0 * inv_z0
+                        perspective_w1 = w1 * inv_z1
+                        perspective_w2 = w2 * inv_z2
+                        
+                        # Сумма весов
+                        inv_w_sum = 1.0 / (perspective_w0 + perspective_w1 + perspective_w2)
+                        
+                        # Нормализуем веса
+                        perspective_w0 *= inv_w_sum
+                        perspective_w1 *= inv_w_sum
+                        perspective_w2 *= inv_w_sum
+                        
+                        # Расчет глубины (умножаем 1 / (1/z))
+                        z = 1.0 / (perspective_w0 * inv_z0 + perspective_w1 * inv_z1 + perspective_w2 * inv_z2)
+                    else:
+                        # Линейная интерполяция, если z близко к нулю
+                        z = w0 * z0 + w1 * z1 + w2 * z2
                     
-                    # Интерполируем цвет
+                    # Если текущий пиксель дальше от камеры, чем уже установленный, пропускаем его
+                    if z >= self.buffer[y, x]:
+                        continue
+                    
+                    # Интерполируем цвет по тем же барицентрическим координатам
                     if colors is not None:
-                        r = int(w0 * colors[0].red() + w1 * colors[1].red() + w2 * colors[2].red())
-                        g = int(w0 * colors[0].green() + w1 * colors[1].green() + w2 * colors[2].green())
-                        b = int(w0 * colors[0].blue() + w1 * colors[1].blue() + w2 * colors[2].blue())
-                        a = int(w0 * colors[0].alpha() + w1 * colors[1].alpha() + w2 * colors[2].alpha())
-                        color = QColor(r, g, b, a)
+                        color0, color1, color2 = colors
+                        
+                        # Если цвета одинаковые, оптимизируем
+                        if color0 == color1 and color1 == color2:
+                            color = color0
+                        else:
+                            # Корректная перспективная интерполяция цветов
+                            if z0 != 0 and z1 != 0 and z2 != 0:
+                                r = int(perspective_w0 * color0.red() + perspective_w1 * color1.red() + perspective_w2 * color2.red())
+                                g = int(perspective_w0 * color0.green() + perspective_w1 * color1.green() + perspective_w2 * color2.green())
+                                b = int(perspective_w0 * color0.blue() + perspective_w1 * color1.blue() + perspective_w2 * color2.blue())
+                                a = int(perspective_w0 * color0.alpha() + perspective_w1 * color1.alpha() + perspective_w2 * color2.alpha())
+                            else:
+                                r = int(w0 * color0.red() + w1 * color1.red() + w2 * color2.red())
+                                g = int(w0 * color0.green() + w1 * color1.green() + w2 * color2.green())
+                                b = int(w0 * color0.blue() + w1 * color1.blue() + w2 * color2.blue())
+                                a = int(w0 * color0.alpha() + w1 * color1.alpha() + w2 * color2.alpha())
+                            
+                            # Ограничиваем цвета допустимыми значениями
+                            r = max(0, min(255, r))
+                            g = max(0, min(255, g))
+                            b = max(0, min(255, b))
+                            a = max(0, min(255, a))
+                            
+                            color = QColor(r, g, b, a)
                     else:
                         color = triangle.color
                     
-                    # Устанавливаем пиксель, если он ближе
+                    # Устанавливаем пиксель
                     self.set_pixel(x, y, z, color)
-    
-    def _barycentric_coords(self, v0, v1, v2, p):
-        """Вычисление барицентрических координат точки p относительно треугольника (v0, v1, v2)"""
-        # Конвертируем в float для точности вычислений
-        v0 = (float(v0[0]), float(v0[1]))
-        v1 = (float(v1[0]), float(v1[1]))
-        v2 = (float(v2[0]), float(v2[1]))
-        p = (float(p[0]), float(p[1]))
-        
-        # Вычисляем векторы
-        v0v1 = (v1[0] - v0[0], v1[1] - v0[1])
-        v0v2 = (v2[0] - v0[0], v2[1] - v0[1])
-        v0p = (p[0] - v0[0], p[1] - v0[1])
-        
-        # Вычисляем определители для барицентрических координат
-        d00 = v0v1[0] * v0v1[0] + v0v1[1] * v0v1[1]
-        d01 = v0v1[0] * v0v2[0] + v0v1[1] * v0v2[1]
-        d11 = v0v2[0] * v0v2[0] + v0v2[1] * v0v2[1]
-        d20 = v0p[0] * v0v1[0] + v0p[1] * v0v1[1]
-        d21 = v0p[0] * v0v2[0] + v0p[1] * v0v2[1]
-        
-        # Вычисляем барицентрические координаты
-        denom = d00 * d11 - d01 * d01
-        # Защита от деления на ноль
-        if abs(denom) < 1e-6:
-            return (-1, -1, -1)  # Вырожденный треугольник
-            
-        v = (d11 * d20 - d01 * d21) / denom
-        w = (d00 * d21 - d01 * d20) / denom
-        u = 1.0 - v - w
-        
-        return (u, v, w)
     
     def fill_triangle_phong(self, triangle, screen_coords, base_color, light_position, camera_position, light_color=None):
         """Закрашивание треугольника с использованием метода затенения Фонга и Z-буфера"""
-        # Находим границы треугольника на экране
-        min_x = max(0, min(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
-        max_x = min(self.width - 1, max(int(screen_coords[0][0]), int(screen_coords[1][0]), int(screen_coords[2][0])))
-        min_y = max(0, min(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
-        max_y = min(self.height - 1, max(int(screen_coords[0][1]), int(screen_coords[1][1]), int(screen_coords[2][1])))
-        
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
         z0, z1, z2 = triangle.vertices[0].z, triangle.vertices[1].z, triangle.vertices[2].z
+        
+        # Проверка вырожденного треугольника (с нулевой площадью)
+        if (v0[0] == v1[0] and v0[1] == v1[1]) or (v0[0] == v2[0] and v0[1] == v2[1]) or (v1[0] == v2[0] and v1[1] == v2[1]):
+            return  # Пропускаем вырожденные треугольники
+        
+        # Находим границы треугольника на экране
+        min_x = max(0, min(int(v0[0]), int(v1[0]), int(v2[0])))
+        max_x = min(self.width - 1, max(int(v0[0]), int(v1[0]), int(v2[0])))
+        min_y = max(0, min(int(v0[1]), int(v1[1]), int(v2[1])))
+        max_y = min(self.height - 1, max(int(v0[1]), int(v1[1]), int(v2[1])))
+        
+        # Если треугольник находится за пределами экрана, пропускаем его
+        if max_x < min_x or max_y < min_y:
+            return
         
         # Получаем нормали вершин
         if triangle.vertex_normals[0] is None:
@@ -1099,33 +1138,70 @@ class ZBuffer:
         
         n0, n1, n2 = triangle.vertex_normals
         
+        # Оптимизация: вычисляем барицентрические коэффициенты заранее
+        v0_x, v0_y = v0[0], v0[1]
+        v1_x, v1_y = v1[0], v1[1]
+        v2_x, v2_y = v2[0], v2[1]
+        
+        # Площадь треугольника (удвоенная)
+        area = (v1_x - v0_x) * (v2_y - v0_y) - (v2_x - v0_x) * (v1_y - v0_y)
+        
+        # Если площадь треугольника слишком мала, пропускаем его
+        if abs(area) < 1e-6:
+            return
+        
+        inv_area = 1.0 / area
+        
         # Перебираем пиксели в рамках прямоугольника, содержащего треугольник
         for y in range(min_y, max_y + 1):
             for x in range(min_x, max_x + 1):
-                # Вычисляем барицентрические координаты
-                w0, w1, w2 = self._barycentric_coords(v0, v1, v2, (x, y))
+                # Быстрое вычисление барицентрических координат
+                w0 = ((v1_x - x) * (v2_y - y) - (v2_x - x) * (v1_y - y)) * inv_area
+                w1 = ((v2_x - x) * (v0_y - y) - (v0_x - x) * (v2_y - y)) * inv_area
+                w2 = 1.0 - w0 - w1
                 
                 # Если точка находится внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     # Интерполируем z-координату с учетом перспективы
-                    if abs(z0) < 1e-6 or abs(z1) < 1e-6 or abs(z2) < 1e-6:
-                        # Защита от деления на ноль
-                        z = w0 * z0 + w1 * z1 + w2 * z2
-                    else:
+                    # Для правильной перспективной коррекции
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        # Перспективно-корректная интерполяция через обратные z
                         inv_z0 = 1.0 / z0
                         inv_z1 = 1.0 / z1
                         inv_z2 = 1.0 / z2
-                        inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
-                        z = 1.0 / inv_z if abs(inv_z) > 1e-6 else 0
+                        
+                        # Интерполируем обратные z-значения
+                        perspective_w0 = w0 * inv_z0
+                        perspective_w1 = w1 * inv_z1
+                        perspective_w2 = w2 * inv_z2
+                        
+                        # Сумма весов
+                        inv_w_sum = 1.0 / (perspective_w0 + perspective_w1 + perspective_w2)
+                        
+                        # Нормализуем веса
+                        perspective_w0 *= inv_w_sum
+                        perspective_w1 *= inv_w_sum
+                        perspective_w2 *= inv_w_sum
+                        
+                        # Расчет глубины
+                        z = 1.0 / (perspective_w0 * inv_z0 + perspective_w1 * inv_z1 + perspective_w2 * inv_z2)
+                    else:
+                        # Линейная интерполяция, если z близко к нулю
+                        z = w0 * z0 + w1 * z1 + w2 * z2
                     
-                    # Проверяем, если этот пиксель уже установлен с меньшим значением Z
+                    # Если текущий пиксель дальше от камеры, чем уже установленный, пропускаем его
                     if z >= self.buffer[y, x]:
-                        continue  # Переходим к следующему пикселю
+                        continue
                     
-                    # Интерполируем нормаль в точке
-                    nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
-                    ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
-                    nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
+                    # Интерполируем нормаль в точке (с перспективной коррекцией)
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        nx = perspective_w0 * n0.x + perspective_w1 * n1.x + perspective_w2 * n2.x
+                        ny = perspective_w0 * n0.y + perspective_w1 * n1.y + perspective_w2 * n2.y
+                        nz = perspective_w0 * n0.z + perspective_w1 * n1.z + perspective_w2 * n2.z
+                    else:
+                        nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
+                        ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
+                        nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
                     
                     # Нормализуем интерполированную нормаль
                     length = math.sqrt(nx*nx + ny*ny + nz*nz)
@@ -1134,10 +1210,15 @@ class ZBuffer:
                         ny /= length
                         nz /= length
                     
-                    # Интерполируем позицию в 3D
-                    world_x = w0 * triangle.vertices[0].x + w1 * triangle.vertices[1].x + w2 * triangle.vertices[2].x
-                    world_y = w0 * triangle.vertices[0].y + w1 * triangle.vertices[1].y + w2 * triangle.vertices[2].y
-                    world_z = w0 * triangle.vertices[0].z + w1 * triangle.vertices[1].z + w2 * triangle.vertices[2].z
+                    # Интерполируем мировую позицию (с перспективной коррекцией)
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        world_x = perspective_w0 * triangle.vertices[0].x + perspective_w1 * triangle.vertices[1].x + perspective_w2 * triangle.vertices[2].x
+                        world_y = perspective_w0 * triangle.vertices[0].y + perspective_w1 * triangle.vertices[1].y + perspective_w2 * triangle.vertices[2].y
+                        world_z = perspective_w0 * triangle.vertices[0].z + perspective_w1 * triangle.vertices[1].z + perspective_w2 * triangle.vertices[2].z
+                    else:
+                        world_x = w0 * triangle.vertices[0].x + w1 * triangle.vertices[1].x + w2 * triangle.vertices[2].x
+                        world_y = w0 * triangle.vertices[0].y + w1 * triangle.vertices[1].y + w2 * triangle.vertices[2].y
+                        world_z = w0 * triangle.vertices[0].z + w1 * triangle.vertices[1].z + w2 * triangle.vertices[2].z
                     
                     # Создаем вектор нормали и позиции в мировых координатах
                     normal = Vector3D(nx, ny, nz)
@@ -1186,8 +1267,12 @@ class ZBuffer:
                     # Коэффициент зеркального отражения
                     specular = max(0, reflect.x * view.x + reflect.y * view.y + reflect.z * view.z) ** 20
                     
-                    # Итоговая интенсивность освещения
-                    light_intensity = min(1.0, 0.2 + diffuse * 0.5 + specular * 0.3)
+                    # Итоговая интенсивность освещения c улучшенным балансом компонентов
+                    ambient = 0.2
+                    diffuse_factor = 0.6
+                    specular_factor = 0.3
+                    
+                    light_intensity = min(1.0, ambient + diffuse * diffuse_factor + specular * specular_factor)
                     
                     # Применяем интенсивность освещения к базовому цвету с учетом цвета источника света
                     if light_color:
@@ -1199,7 +1284,7 @@ class ZBuffer:
                         g = min(255, int(base_color.green() * light_intensity))
                         b = min(255, int(base_color.blue() * light_intensity))
                     
-                    # Устанавливаем пиксель, если он ближе
+                    # Устанавливаем пиксель
                     self.set_pixel(x, y, z, QColor(r, g, b, base_color.alpha()))
     
     def render_to_image(self):
@@ -1209,8 +1294,8 @@ class ZBuffer:
         # Заполняем изображение данными из цветового буфера
         for y in range(self.height):
             for x in range(self.width):
-                # Если пиксель не был установлен, он остается прозрачным
-                if self.buffer[y, x] != np.inf:
+                # Если пиксель не был установлен (бесконечная глубина), он остается прозрачным
+                if self.buffer[y, x] < 1.0e30:
                     c = self.color_buffer[y, x]
                     image.setPixelColor(x, y, QColor(c[0], c[1], c[2], c[3]))
         
