@@ -110,10 +110,16 @@ class Triangle:
         # Если скалярное произведение положительное, грань обращена к камере
         dot_product = self.normal.x * v_to_camera.x + self.normal.y * v_to_camera.y + self.normal.z * v_to_camera.z
         
-        # Используем более строгое значение порога для стабильной отрисовки
+        # Для внешних граней определяем видимость в зависимости от положения камеры
+        if self.face_type == "external":
+            # При двусторонней отрисовке считаем все грани видимыми
+            # Удаляем проверку dot_product - пусть Z-буфер сам решает, какие треугольники видимы
+            return True
+            
+        # Пороговое значение для стабильной отрисовки
         visibility_threshold = 1e-4
         
-        # Треугольник видим, если его нормаль направлена в сторону камеры
+        # По умолчанию треугольник видим, если его нормаль направлена в сторону камеры
         return dot_product > visibility_threshold
     
     def get_depth(self):
@@ -560,7 +566,7 @@ class Letter3D:
         
         # 4. Полуокружность (с улучшенным закрашиванием)
         radius = h/4
-        center_x = 1.5                          # Центр справа от средней линии
+        center_x = 0.5                          # Центр справа от средней линии
         center_z = -h/4                         # Центр на уровне средней линии
         
         # Создаем полуокружность с правильным закрашиванием граней
@@ -575,6 +581,42 @@ class Letter3D:
         self._add_box_with_triangles(
             Vector3D(-w/2+t, -d/2, -h/2-7),     # левый нижний передний
             Vector3D(0, d/2, -h/2-7+t),         # правый верхний задний
+            self.color
+        )
+        
+        # 6. Добавляем "заплатки" для заполнения щелей в местах соединения дуги с прямоугольниками
+        
+        # Вычисляем координаты точек соединения дуги с средней линией
+        # Верхняя точка дуги (угол -90 градусов)
+        top_arc_x = center_x
+        top_arc_z = center_z + radius
+        
+        # Добавляем заплатку для соединения с верхней частью дуги
+        self._add_box_with_triangles(
+            Vector3D(-t/2, -d/2 - 0.1, top_arc_z - t/2),
+            Vector3D(top_arc_x + t/2, d/2 + 0.1, top_arc_z + t/2),
+            self.color
+        )
+        
+        # Нижняя точка дуги (угол 90 градусов)
+        bottom_arc_x = center_x
+        bottom_arc_z = center_z - radius
+        
+        # Добавляем заплатку для соединения с нижней частью дуги
+        self._add_box_with_triangles(
+            Vector3D(-t/2, -d/2 - 0.1, bottom_arc_z - t/2),
+            Vector3D(bottom_arc_x + t/2, d/2 + 0.1, bottom_arc_z + t/2),
+            self.color
+        )
+        
+        # Правая точка дуги (угол 0 градусов)
+        right_arc_x = center_x + radius
+        right_arc_z = center_z
+        
+        # Добавляем заплатку в правой части дуги для лучшего соединения
+        self._add_box_with_triangles(
+            Vector3D(right_arc_x - t/2, -d/2 - 0.1, center_z - t/2),
+            Vector3D(right_arc_x + t/2, d/2 + 0.1, center_z + t/2),
             self.color
         )
     
@@ -1130,6 +1172,9 @@ class Renderer:
         # Применяем матрицу вида для перехода в пространство камеры
         v_view = view_matrix @ v_world
         
+        # Сохраняем z-координату в пространстве вида для корректной работы с глубиной
+        view_z = v_view[2]
+        
         # Применяем проекционную матрицу для перехода в нормализованное пространство устройства
         v_clip = projection_matrix @ v_view
         
@@ -1143,8 +1188,8 @@ class Renderer:
         screen_x = (v_ndc[0] + 1.0) * 0.5 * self.canvas_width
         screen_y = (1.0 - v_ndc[1]) * 0.5 * self.canvas_height  # Инвертируем Y-координату
         
-        # Сохраняем преобразованную Z-координату для Z-буфера
-        # Нормализуем ее к диапазону [0, 1], где 0 - ближняя плоскость, 1 - дальняя
+        # Используем нормализованную z-координату из NDC для Z-буфера
+        # Она находится в диапазоне [-1, 1], где -1 - ближняя плоскость, 1 - дальняя
         screen_z = v_ndc[2]
         
         return [screen_x, screen_y, screen_z]
@@ -1154,19 +1199,20 @@ class ZBuffer:
         """Инициализация Z-буфера"""
         self.width = width
         self.height = height
-        self.buffer = np.full((height, width), np.inf, dtype=np.float64)  # Буфер глубины (z-значения)
+        # Используем 1.0 для первоначальной инициализации z-буфера (дальняя плоскость)
+        self.buffer = np.ones((height, width), dtype=np.float64)  
         self.color_buffer = np.zeros((height, width, 4), dtype=np.uint8)  # Цветовой буфер (RGBA)
     
     def clear_buffer(self):
         """Очистка Z-буфера и цветового буфера"""
-        self.buffer.fill(np.inf)
+        self.buffer.fill(1.0)  # Заполняем 1.0 (дальняя плоскость в NDC)
         self.color_buffer.fill(0)
     
     def resize(self, width, height):
         """Изменение размера буферов"""
         self.width = width
         self.height = height
-        self.buffer = np.full((height, width), np.inf, dtype=np.float64)
+        self.buffer = np.ones((height, width), dtype=np.float64)
         self.color_buffer = np.zeros((height, width, 4), dtype=np.uint8)
     
     def set_pixel(self, x, y, z, color):
@@ -1174,6 +1220,7 @@ class ZBuffer:
         # Проверяем, находится ли пиксель в пределах буфера
         if 0 <= x < self.width and 0 <= y < self.height:
             # Если z-координата меньше, чем хранящаяся в буфере, значит пиксель ближе к камере
+            # z должен быть в диапазоне [0, 1], где 0 ближе к камере, а 1 дальше
             if z < self.buffer[y, x]:
                 # Обновляем Z-буфер
                 self.buffer[y, x] = z
@@ -1187,7 +1234,7 @@ class ZBuffer:
         """Закрашивание треугольника с использованием Z-буфера и попиксельного сканирования"""
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
-        z0, z1, z2 = v0[2], v1[2], v2[2]  # Используем z из проекции, а не из исходной вершины
+        z0, z1, z2 = v0[2], v1[2], v2[2]  # Z-координаты в NDC
         
         # Проверка вырожденного треугольника (с нулевой площадью)
         if (v0[0] == v1[0] and v0[1] == v1[1]) or (v0[0] == v2[0] and v0[1] == v2[1]) or (v1[0] == v2[0] and v1[1] == v2[1]):
@@ -1232,37 +1279,30 @@ class ZBuffer:
                 # Если точка внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     # Интерполируем z-координату с перспективной коррекцией
-                    if abs(z0) > 1e-6 and abs(z1) > 1e-6 and abs(z2) > 1e-6:
-                        # Вычисляем обратные значения z для перспективной коррекции
+                    # Используем линейную интерполяцию для w/z вместо z
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        # Используем 1/z для перспективно-корректной интерполяции
                         inv_z0 = 1.0 / z0
                         inv_z1 = 1.0 / z1
                         inv_z2 = 1.0 / z2
                         
-                        # Перспективно-корректные веса
-                        perspective_w0 = w0 * inv_z0
-                        perspective_w1 = w1 * inv_z1
-                        perspective_w2 = w2 * inv_z2
+                        # Интерполируем обратные значения z
+                        interpolated_inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
                         
-                        # Нормализуем веса
-                        weight_sum = perspective_w0 + perspective_w1 + perspective_w2
-                        if abs(weight_sum) > 1e-6:
-                            inv_w_sum = 1.0 / weight_sum
-                            perspective_w0 *= inv_w_sum
-                            perspective_w1 *= inv_w_sum
-                            perspective_w2 *= inv_w_sum
-                            
-                            # Расчет итоговой глубины
-                            z = 1.0 / (perspective_w0 * inv_z0 + perspective_w1 * inv_z1 + perspective_w2 * inv_z2)
+                        # Восстанавливаем значение z
+                        if abs(interpolated_inv_z) > 1e-6:
+                            z = 1.0 / interpolated_inv_z
                         else:
-                            # Линейная интерполяция при проблемах с весами
                             z = w0 * z0 + w1 * z1 + w2 * z2
                     else:
-                        # Линейная интерполяция для малых z-значений
+                        # Линейная интерполяция для случаев с нулевыми z
                         z = w0 * z0 + w1 * z1 + w2 * z2
                     
-                    # Преобразуем z в диапазон [0, Infinity], где 0 - ближняя плоскость, Infinity - дальняя
-                    # Это преобразование гарантирует, что z-буфер корректно обрабатывает видимость
+                    # Преобразуем координату z из диапазона [-1, 1] в [0, 1] для z-буфера
                     buffer_z = (z + 1.0) / 2.0
+                    
+                    # Проверка, что z находится в диапазоне [0, 1]
+                    buffer_z = max(0.0, min(1.0, buffer_z))
                     
                     # Если пиксель ближе текущего в z-буфере
                     if buffer_z < self.buffer[y, x]:
@@ -1273,13 +1313,19 @@ class ZBuffer:
                             # Оптимизация для одноцветных треугольников
                             final_color = color0
                         else:
-                            # Перспективно-корректная интерполяция цвета
-                            if abs(z0) > 1e-6 and abs(z1) > 1e-6 and abs(z2) > 1e-6 and abs(weight_sum) > 1e-6:
-                                r = int(perspective_w0 * color0.red() + perspective_w1 * color1.red() + perspective_w2 * color2.red())
-                                g = int(perspective_w0 * color0.green() + perspective_w1 * color1.green() + perspective_w2 * color2.green())
-                                b = int(perspective_w0 * color0.blue() + perspective_w1 * color1.blue() + perspective_w2 * color2.blue())
+                            # Интерполируем цвет с учетом перспективы
+                            if z0 != 0 and z1 != 0 and z2 != 0:
+                                # Перспективно-корректная интерполяция цвета
+                                # w_i/z_i нормализованные для данной точки
+                                w0_perspective = w0 * inv_z0 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                                w1_perspective = w1 * inv_z1 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                                w2_perspective = w2 * inv_z2 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                                
+                                r = int(w0_perspective * color0.red() + w1_perspective * color1.red() + w2_perspective * color2.red())
+                                g = int(w0_perspective * color0.green() + w1_perspective * color1.green() + w2_perspective * color2.green())
+                                b = int(w0_perspective * color0.blue() + w1_perspective * color1.blue() + w2_perspective * color2.blue())
                             else:
-                                # Линейная интерполяция цвета
+                                # Линейная интерполяция цвета, если есть нулевые z
                                 r = int(w0 * color0.red() + w1 * color1.red() + w2 * color2.red())
                                 g = int(w0 * color0.green() + w1 * color1.green() + w2 * color2.green())
                                 b = int(w0 * color0.blue() + w1 * color1.blue() + w2 * color2.blue())
@@ -1299,9 +1345,7 @@ class ZBuffer:
         """Закрашивание треугольника с моделью освещения Фонга и попиксельным расчетом освещения"""
         # Получаем вершины треугольника и их z-координаты
         v0, v1, v2 = screen_coords
-        
-        # Важно: используем z-координаты из экранных координат, которые уже прошли проекцию
-        z0, z1, z2 = v0[2], v1[2], v2[2]
+        z0, z1, z2 = v0[2], v1[2], v2[2]  # Z-координаты в NDC
         
         # Проверка вырожденного треугольника
         if (v0[0] == v1[0] and v0[1] == v1[1]) or (v0[0] == v2[0] and v0[1] == v2[1]) or (v1[0] == v2[0] and v1[1] == v2[1]):
@@ -1410,22 +1454,70 @@ class ZBuffer:
                 # Если точка внутри треугольника
                 if w0 >= 0 and w1 >= 0 and w2 >= 0:
                     # Интерполируем z-координату с перспективной коррекцией
-                    # Используем значения z из проекции (NDC), в диапазоне [-1, 1]
-                    buffer_z = w0 * z0 + w1 * z1 + w2 * z2
+                    if z0 != 0 and z1 != 0 and z2 != 0:
+                        # Используем 1/z для перспективно-корректной интерполяции
+                        inv_z0 = 1.0 / z0
+                        inv_z1 = 1.0 / z1
+                        inv_z2 = 1.0 / z2
+                        
+                        # Интерполируем обратные значения z
+                        interpolated_inv_z = w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2
+                        
+                        # Восстанавливаем значение z
+                        if abs(interpolated_inv_z) > 1e-6:
+                            z = 1.0 / interpolated_inv_z
+                        else:
+                            z = w0 * z0 + w1 * z1 + w2 * z2
+                    else:
+                        # Линейная интерполяция для случаев с нулевыми z
+                        z = w0 * z0 + w1 * z1 + w2 * z2
                     
-                    # Преобразуем z из диапазона [-1, 1] в диапазон [0, 1] для Z-буфера
-                    # где 0 - ближняя плоскость, 1 - дальняя
-                    normalized_z = (buffer_z + 1.0) / 2.0
+                    # Преобразуем z из диапазона [-1, 1] в [0, 1] для z-буфера
+                    buffer_z = (z + 1.0) / 2.0
+                    
+                    # Проверка, что z находится в диапазоне [0, 1]
+                    buffer_z = max(0.0, min(1.0, buffer_z))
                     
                     # Если пиксель ближе текущего в z-буфере
-                    if normalized_z < self.buffer[y, x]:
+                    if buffer_z < self.buffer[y, x]:
                         # Запоминаем глубину текущего пикселя
-                        self.buffer[y, x] = normalized_z
+                        self.buffer[y, x] = buffer_z
                         
-                        # Интерполируем нормаль с перспективной коррекцией
-                        nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
-                        ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
-                        nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
+                        # Рассчитываем перспективно-корректные веса для интерполяции атрибутов
+                        if z0 != 0 and z1 != 0 and z2 != 0:
+                            # Перспективно-корректная интерполяция
+                            # w_i/z_i нормализованные для данной точки
+                            w0_perspective = w0 * inv_z0 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                            w1_perspective = w1 * inv_z1 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                            w2_perspective = w2 * inv_z2 / (w0 * inv_z0 + w1 * inv_z1 + w2 * inv_z2)
+                            
+                            # Интерполируем нормаль с перспективной коррекцией
+                            nx = w0_perspective * n0.x + w1_perspective * n1.x + w2_perspective * n2.x
+                            ny = w0_perspective * n0.y + w1_perspective * n1.y + w2_perspective * n2.y
+                            nz = w0_perspective * n0.z + w1_perspective * n1.z + w2_perspective * n2.z
+                            
+                            # Интерполируем вектор взгляда
+                            view_x = w0_perspective * view_dir0.x + w1_perspective * view_dir1.x + w2_perspective * view_dir2.x
+                            view_y = w0_perspective * view_dir0.y + w1_perspective * view_dir1.y + w2_perspective * view_dir2.y
+                            view_z = w0_perspective * view_dir0.z + w1_perspective * view_dir1.z + w2_perspective * view_dir2.z
+                            
+                            # Интерполируем вектор света
+                            light_x = w0_perspective * light_dir0.x + w1_perspective * light_dir1.x + w2_perspective * light_dir2.x
+                            light_y = w0_perspective * light_dir0.y + w1_perspective * light_dir1.y + w2_perspective * light_dir2.y
+                            light_z = w0_perspective * light_dir0.z + w1_perspective * light_dir1.z + w2_perspective * light_dir2.z
+                        else:
+                            # Используем обычную линейную интерполяцию
+                            nx = w0 * n0.x + w1 * n1.x + w2 * n2.x
+                            ny = w0 * n0.y + w1 * n1.y + w2 * n2.y
+                            nz = w0 * n0.z + w1 * n1.z + w2 * n2.z
+                            
+                            view_x = w0 * view_dir0.x + w1 * view_dir1.x + w2 * view_dir2.x
+                            view_y = w0 * view_dir0.y + w1 * view_dir1.y + w2 * view_dir2.y
+                            view_z = w0 * view_dir0.z + w1 * view_dir1.z + w2 * view_dir2.z
+                            
+                            light_x = w0 * light_dir0.x + w1 * light_dir1.x + w2 * light_dir2.x
+                            light_y = w0 * light_dir0.y + w1 * light_dir1.y + w2 * light_dir2.y
+                            light_z = w0 * light_dir0.z + w1 * light_dir1.z + w2 * light_dir2.z
                         
                         # Нормализуем интерполированную нормаль
                         n_length = math.sqrt(nx*nx + ny*ny + nz*nz)
@@ -1434,11 +1526,6 @@ class ZBuffer:
                             ny /= n_length
                             nz /= n_length
                         
-                        # Интерполируем вектор взгляда
-                        view_x = w0 * view_dir0.x + w1 * view_dir1.x + w2 * view_dir2.x
-                        view_y = w0 * view_dir0.y + w1 * view_dir1.y + w2 * view_dir2.y
-                        view_z = w0 * view_dir0.z + w1 * view_dir1.z + w2 * view_dir2.z
-                        
                         # Нормализуем интерполированный вектор взгляда
                         view_length = math.sqrt(view_x*view_x + view_y*view_y + view_z*view_z)
                         if view_length > 1e-6:
@@ -1446,17 +1533,23 @@ class ZBuffer:
                             view_y /= view_length
                             view_z /= view_length
                         
-                        # Интерполируем вектор света
-                        light_x = w0 * light_dir0.x + w1 * light_dir1.x + w2 * light_dir2.x
-                        light_y = w0 * light_dir0.y + w1 * light_dir1.y + w2 * light_dir2.y
-                        light_z = w0 * light_dir0.z + w1 * light_dir1.z + w2 * light_dir2.z
-                        
                         # Нормализуем интерполированный вектор света
                         light_length = math.sqrt(light_x*light_x + light_y*light_y + light_z*light_z)
                         if light_length > 1e-6:
                             light_x /= light_length
                             light_y /= light_length
                             light_z /= light_length
+                        
+                        # Вычисляем скалярное произведение нормали и вектора взгляда
+                        # для определения, является ли эта точка "лицевой" или "обратной" стороной
+                        view_dot = nx * view_x + ny * view_y + nz * view_z
+                        
+                        # Если мы смотрим на обратную сторону треугольника, инвертируем нормаль
+                        # для правильного расчета освещения с обеих сторон
+                        if view_dot < 0:
+                            nx = -nx
+                            ny = -ny
+                            nz = -nz
                         
                         # Вычисляем диффузную составляющую
                         diffuse = max(0, nx * light_x + ny * light_y + nz * light_z)
@@ -1510,7 +1603,7 @@ class ZBuffer:
         for y in range(self.height):
             for x in range(self.width):
                 # Если пиксель не был установлен (имеет бесконечную глубину), он остается прозрачным
-                if self.buffer[y, x] < float('inf'):
+                if self.buffer[y, x] < 1.0:  # Проверяем, был ли установлен пиксель (< 1.0 вместо < infinity)
                     c = self.color_buffer[y, x]
                     image.setPixelColor(x, y, QColor(c[0], c[1], c[2], c[3]))
                 else:
@@ -1668,9 +1761,9 @@ class Canvas3D(QWidget):
             transformed_triangle = triangle.transform(self.letter1.transform_matrix)
             # Вычисляем нормаль для определения видимости
             transformed_triangle.calculate_normal()
-            # Проверяем, виден ли треугольник с позиции камеры
-            if transformed_triangle.is_visible(self.camera.position):
-                triangles.append((transformed_triangle, self.letter1.color))
+            # Добавляем треугольник в список независимо от видимости
+            # Z-буфер сам определит, какие треугольники нужно отрисовать
+            triangles.append((transformed_triangle, self.letter1.color))
         
         # Обрабатываем треугольники второй буквы
         for triangle in self.letter2.triangles:
@@ -1678,13 +1771,11 @@ class Canvas3D(QWidget):
             transformed_triangle = triangle.transform(self.letter2.transform_matrix)
             # Вычисляем нормаль для определения видимости
             transformed_triangle.calculate_normal()
-            # Проверяем, виден ли треугольник с позиции камеры
-            if transformed_triangle.is_visible(self.camera.position):
-                triangles.append((transformed_triangle, self.letter2.color))
+            # Добавляем треугольник в список независимо от видимости
+            triangles.append((transformed_triangle, self.letter2.color))
         
         # Сортировка треугольников по глубине (от дальних к ближним)
-        # Это оптимизирует работу Z-буфера, так как ближние треугольники, которые 
-        # перекрывают дальние, рисуются позже
+        # Это оптимизирует работу Z-буфера, так как ближние треугольники рисуются позже
         triangles.sort(key=lambda x: x[0].get_depth(), reverse=True)
         
         # Обработка всех треугольников
@@ -1695,16 +1786,66 @@ class Canvas3D(QWidget):
                 screen_coord = self.renderer.project_vertex(vertex, np.identity(4), view_matrix, projection_matrix)
                 screen_coords.append(screen_coord)
             
-            # Проверяем, находится ли треугольник позади камеры или вне области видимости
-            if any(z > 1.0 or z < -1.0 for _, _, z in screen_coords):
+            # Проверяем минимальные требования видимости:
+            # 1. Треугольник не должен быть полностью за пределами экрана
+            # 2. Треугольник не должен быть слишком маленьким
+            
+            # Проверка 1: Треугольник полностью за ближней или дальней плоскостью отсечения
+            if all(z > 1.0 for _, _, z in screen_coords) or all(z < -1.0 for _, _, z in screen_coords):
+                continue
+                
+            # Проверка 2: Треугольник имеет нулевую площадь (почти вырожденный)
+            # Вычисляем площадь треугольника на экране
+            p0_x, p0_y = screen_coords[0][0], screen_coords[0][1]
+            p1_x, p1_y = screen_coords[1][0], screen_coords[1][1]
+            p2_x, p2_y = screen_coords[2][0], screen_coords[2][1]
+            area = 0.5 * abs((p1_x - p0_x) * (p2_y - p0_y) - (p2_x - p0_x) * (p1_y - p0_y))
+            if area < 1.0:  # Если площадь меньше 1 пикселя, не рисуем
                 continue
             
             # Используем различные модели затенения в зависимости от выбранного режима
             if self.render_mode == 'flat':
-                # Плоское затенение - просто используем базовый цвет объекта без учета освещения
-                color = QColor(base_color.red(), base_color.green(), base_color.blue(), 255)  # Полная непрозрачность
+                # Рассчитываем освещение с учетом двустороннего рендеринга
+                # При двустороннем рендеринге рассчитываем освещение с учетом положения камеры
+                # относительно нормали треугольника
                 
-                # Один цвет для всех вершин треугольника
+                # Определяем, смотрит ли треугольник в сторону камеры
+                v_to_camera = Vector3D(
+                    self.camera.position.x - triangle.vertices[0].x,
+                    self.camera.position.y - triangle.vertices[0].y,
+                    self.camera.position.z - triangle.vertices[0].z
+                )
+                
+                # Нормализуем вектор от треугольника к камере
+                cam_len = math.sqrt(v_to_camera.x**2 + v_to_camera.y**2 + v_to_camera.z**2)
+                if cam_len > 1e-6:
+                    v_to_camera.x /= cam_len
+                    v_to_camera.y /= cam_len
+                    v_to_camera.z /= cam_len
+                
+                # Определяем ориентацию треугольника относительно камеры
+                dot_product = triangle.normal.x * v_to_camera.x + triangle.normal.y * v_to_camera.y + triangle.normal.z * v_to_camera.z
+                
+                # Для обратной стороны треугольника инвертируем нормаль для расчета освещения
+                if dot_product < 0:
+                    # Создаем временную нормаль с обратным направлением
+                    inverted_normal = Vector3D(-triangle.normal.x, -triangle.normal.y, -triangle.normal.z)
+                    # Создаем временный треугольник для расчета освещения
+                    temp_triangle = Triangle(triangle.vertices[0], triangle.vertices[1], triangle.vertices[2])
+                    temp_triangle.normal = inverted_normal
+                    # Рассчитываем освещение с инвертированной нормалью
+                    light_intensity = temp_triangle.calculate_shading(self.light.position, "flat", self.camera.position, self.light.color)
+                else:
+                    # Для треугольников, обращенных к камере, рассчитываем освещение обычным образом
+                    light_intensity = triangle.calculate_shading(self.light.position, "flat", self.camera.position, self.light.color)
+                
+                # Применяем интенсивность освещения к базовому цвету
+                r = min(255, int(base_color.red() * light_intensity))
+                g = min(255, int(base_color.green() * light_intensity))
+                b = min(255, int(base_color.blue() * light_intensity))
+                color = QColor(r, g, b, 255)  # Полная непрозрачность
+                
+                # Создаем одинаковый цвет для всех вершин треугольника
                 colors = [color, color, color]
                 
                 # Закрашиваем треугольник
@@ -1712,13 +1853,51 @@ class Canvas3D(QWidget):
             
             elif self.render_mode == 'gouraud':
                 # Метод Гуро - интерполяция интенсивности освещения между вершинами
-                triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
+                # Для метода Гуро также учитываем двусторонний рендеринг
+                
+                # Определяем, смотрит ли треугольник в сторону камеры
+                v_to_camera = Vector3D(
+                    self.camera.position.x - triangle.vertices[0].x,
+                    self.camera.position.y - triangle.vertices[0].y,
+                    self.camera.position.z - triangle.vertices[0].z
+                )
+                
+                # Нормализуем вектор от треугольника к камере
+                cam_len = math.sqrt(v_to_camera.x**2 + v_to_camera.y**2 + v_to_camera.z**2)
+                if cam_len > 1e-6:
+                    v_to_camera.x /= cam_len
+                    v_to_camera.y /= cam_len
+                    v_to_camera.z /= cam_len
+                
+                # Определяем ориентацию треугольника относительно камеры
+                dot_product = triangle.normal.x * v_to_camera.x + triangle.normal.y * v_to_camera.y + triangle.normal.z * v_to_camera.z
+                
+                # Для обратной стороны треугольника инвертируем нормали вершин
+                if dot_product < 0:
+                    # Создаем временный треугольник с инвертированными нормалями вершин
+                    temp_triangle = Triangle(triangle.vertices[0], triangle.vertices[1], triangle.vertices[2])
+                    temp_triangle.calculate_vertex_normals()
+                    
+                    # Инвертируем нормали вершин
+                    for i in range(3):
+                        if temp_triangle.vertex_normals[i]:
+                            temp_triangle.vertex_normals[i].x = -temp_triangle.vertex_normals[i].x
+                            temp_triangle.vertex_normals[i].y = -temp_triangle.vertex_normals[i].y
+                            temp_triangle.vertex_normals[i].z = -temp_triangle.vertex_normals[i].z
+                    
+                    # Рассчитываем интенсивность в вершинах с инвертированными нормалями
+                    temp_triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
+                    vertex_intensities = temp_triangle.vertex_intensity
+                else:
+                    # Для треугольников, обращенных к камере, рассчитываем интенсивность обычным образом
+                    triangle.calculate_vertex_intensity(self.light.position, self.camera.position, self.light.color)
+                    vertex_intensities = triangle.vertex_intensity
                 
                 # Вычисляем цвета для каждой вершины
                 colors = []
                 light_color = self.light.color
                 for i in range(3):
-                    intensity = triangle.vertex_intensity[i]
+                    intensity = vertex_intensities[i]
                     r = min(255, int(base_color.red() * intensity * light_color.red() / 255))
                     g = min(255, int(base_color.green() * intensity * light_color.green() / 255))
                     b = min(255, int(base_color.blue() * intensity * light_color.blue() / 255))
@@ -1729,20 +1908,66 @@ class Canvas3D(QWidget):
             
             elif self.render_mode == 'phong':
                 # Метод Фонга - интерполяция нормалей и расчет освещения в каждой точке
-                triangle.calculate_vertex_normals()
+                # Для метода Фонга также учитываем двусторонний рендеринг
                 
-                # Создаем непрозрачный базовый цвет
-                opaque_base_color = QColor(base_color.red(), base_color.green(), base_color.blue(), 255)
-                
-                # Закрашиваем треугольник с моделью освещения Фонга
-                self.z_buffer.fill_triangle_phong(
-                    triangle, 
-                    screen_coords, 
-                    opaque_base_color, 
-                    self.light.position, 
-                    self.camera.position,
-                    self.light.color
+                # Определяем, смотрит ли треугольник в сторону камеры
+                v_to_camera = Vector3D(
+                    self.camera.position.x - triangle.vertices[0].x,
+                    self.camera.position.y - triangle.vertices[0].y,
+                    self.camera.position.z - triangle.vertices[0].z
                 )
+                
+                # Нормализуем вектор от треугольника к камере
+                cam_len = math.sqrt(v_to_camera.x**2 + v_to_camera.y**2 + v_to_camera.z**2)
+                if cam_len > 1e-6:
+                    v_to_camera.x /= cam_len
+                    v_to_camera.y /= cam_len
+                    v_to_camera.z /= cam_len
+                
+                # Определяем ориентацию треугольника относительно камеры
+                dot_product = triangle.normal.x * v_to_camera.x + triangle.normal.y * v_to_camera.y + triangle.normal.z * v_to_camera.z
+                
+                # Для обратной стороны треугольника инвертируем нормали вершин
+                if dot_product < 0:
+                    # Создаем временный треугольник с инвертированными нормалями
+                    temp_triangle = Triangle(triangle.vertices[0], triangle.vertices[1], triangle.vertices[2])
+                    temp_triangle.calculate_vertex_normals()
+                    
+                    # Инвертируем нормали вершин
+                    for i in range(3):
+                        if temp_triangle.vertex_normals[i]:
+                            temp_triangle.vertex_normals[i].x = -temp_triangle.vertex_normals[i].x
+                            temp_triangle.vertex_normals[i].y = -temp_triangle.vertex_normals[i].y
+                            temp_triangle.vertex_normals[i].z = -temp_triangle.vertex_normals[i].z
+                    
+                    # Создаем непрозрачный базовый цвет
+                    opaque_base_color = QColor(base_color.red(), base_color.green(), base_color.blue(), 255)
+                    
+                    # Закрашиваем треугольник с моделью освещения Фонга и инвертированными нормалями
+                    self.z_buffer.fill_triangle_phong(
+                        temp_triangle, 
+                        screen_coords, 
+                        opaque_base_color, 
+                        self.light.position, 
+                        self.camera.position,
+                        self.light.color
+                    )
+                else:
+                    # Для треугольников, обращенных к камере, используем стандартную отрисовку
+                    triangle.calculate_vertex_normals()
+                    
+                    # Создаем непрозрачный базовый цвет
+                    opaque_base_color = QColor(base_color.red(), base_color.green(), base_color.blue(), 255)
+                    
+                    # Закрашиваем треугольник с моделью освещения Фонга
+                    self.z_buffer.fill_triangle_phong(
+                        triangle, 
+                        screen_coords, 
+                        opaque_base_color, 
+                        self.light.position, 
+                        self.camera.position,
+                        self.light.color
+                    )
         
         # Создаем изображение из Z-буфера и отображаем его
         image = self.z_buffer.render_to_image()
